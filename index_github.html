@@ -1,0 +1,1527 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infinite Canvas · 治愈系歌单</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #050508; cursor: grab; }
+  body.drag { cursor: grabbing; }
+  #c { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+
+  /* ── HUD top-left ── */
+  #hud-tl {
+    position: fixed; top: 22px; left: 24px;
+    display: flex; align-items: center; gap: 10px;
+    pointer-events: none; z-index: 30;
+    font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  }
+  .ht-logo { width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.22);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: rgba(255,255,255,0.7); }
+  .ht-title { font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.82); letter-spacing: .02em; }
+  .ht-sub { font-size: 10px; color: rgba(255,255,255,0.35); margin-top: 2px; letter-spacing: .03em; }
+
+  /* ── HUD top-right legend ── */
+  #hud-tr {
+    position: fixed; top: 22px; right: 24px;
+    display: flex; gap: 18px; align-items: flex-start;
+    pointer-events: none; z-index: 30;
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+  }
+  .li { display: flex; align-items: center; gap: 7px; }
+  .li-icon { font-size: 14px; color: rgba(255,255,255,0.4); }
+  .li-key { font-size: 9px; font-weight: 700; letter-spacing: .12em; color: rgba(255,255,255,0.72); text-transform: uppercase; }
+  .li-desc { font-size: 9px; color: rgba(255,255,255,0.32); margin-top: 2px; }
+
+  /* ── Crosshair (browse state) ── */
+  #crosshair {
+    position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 52px; height: 52px;
+    pointer-events: none; z-index: 20;
+    transition: opacity .3s;
+  }
+  #crosshair .c-corner {
+    position: absolute; width: 12px; height: 12px;
+    border-color: rgba(255,255,255,0.55); border-style: solid; border-width: 0;
+  }
+  #crosshair .c-tl { top:0; left:0; border-top-width:1.5px; border-left-width:1.5px; }
+  #crosshair .c-tr { top:0; right:0; border-top-width:1.5px; border-right-width:1.5px; }
+  #crosshair .c-bl { bottom:0; left:0; border-bottom-width:1.5px; border-left-width:1.5px; }
+  #crosshair .c-br { bottom:0; right:0; border-bottom-width:1.5px; border-right-width:1.5px; }
+  #crosshair .c-dot {
+    position: absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width: 5px; height: 5px; border-radius:50%;
+    background: rgba(255,255,255,0.85);
+    box-shadow: 0 0 10px rgba(255,255,255,0.7), 0 0 20px rgba(255,255,255,0.3);
+  }
+  #crosshair.hidden { opacity: 0; }
+
+  /* ── Bottom capsule toolbar (browse state) ── */
+  #toolbar {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(10,10,16,0.75); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 32px; padding: 10px 20px;
+    z-index: 30; white-space: nowrap;
+    font-family: -apple-system, sans-serif;
+    transition: opacity .3s, transform .3s;
+  }
+  #toolbar.hidden { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(10px); visibility: hidden; }
+  .tb-btn {
+    width: 28px; height: 28px; background: none;
+    border: none; color: rgba(255,255,255,0.45);
+    font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; transition: background .12s, color .12s;
+  }
+  .tb-btn:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); }
+  .tb-sep { width: 1px; height: 18px; background: rgba(255,255,255,0.12); }
+  #tb-label { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: .02em; padding: 0 4px; }
+  .tb-vol { display: flex; align-items: center; gap: 8px; }
+  .tb-vol-icon { font-size: 13px; color: rgba(255,255,255,0.4); }
+  #vol-slider { width: 70px; height: 3px; cursor: pointer; accent-color: rgba(255,255,255,0.6); }
+
+  /* ── Bottom-left user (persistent) ── */
+  #hud-user {
+    position: fixed; bottom: 24px; left: 24px;
+    display: flex; align-items: center; gap: 9px;
+    z-index: 30; cursor: pointer;
+    font-family: -apple-system, sans-serif;
+    transition: opacity .2s;
+  }
+  #hud-user:hover { opacity: .82; }
+  .u-av { width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: rgba(255,255,255,0.5); }
+  .u-av.spinning { animation: u-spin 3.5s linear infinite; }
+  @keyframes u-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .u-name { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 500; }
+  .u-sub { font-size: 9px; color: rgba(255,255,255,0.35); margin-top: 2px; }
+
+  /* ── Artist labels ── */
+  .al { position: fixed; pointer-events: none; transform: translate(-50%,-50%);
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    transition: opacity .4s; }
+  .al-dot { width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,255,255,0.5); margin-bottom: 3px; }
+  .al-name { font-size: 8px; font-weight: 700; letter-spacing: .14em;
+    color: rgba(255,255,255,0.6); text-transform: uppercase; white-space: nowrap;
+    font-family: -apple-system, sans-serif; }
+  .al-count { font-size: 8px; color: rgba(255,255,255,0.28); white-space: nowrap;
+    font-family: -apple-system, sans-serif; }
+
+  /* ── Focus glass card ── */
+  #focus-card {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.92);
+    width: 340px;
+    background: rgba(10,10,16,0.82);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 18px; overflow: hidden;
+    z-index: 100; opacity: 0; pointer-events: none;
+    transition: opacity .35s, transform .35s;
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+  }
+  #focus-card.on { opacity: 1; transform: translate(-50%,-50%) scale(1); pointer-events: all; }
+  #fc-art { width: 100%; aspect-ratio: 1; overflow: hidden; position: relative; }
+  #fc-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #fc-close {
+    position: absolute; top: 12px; right: 12px; z-index: 5;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.7); font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s;
+  }
+  #fc-close:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  #fc-info { padding: 16px 18px 10px; }
+  #fc-title { font-size: 20px; font-weight: 700; color: #fff; line-height: 1.2; }
+  #fc-artist { font-size: 12px; color: rgba(255,255,255,0.55); margin-top: 4px; }
+  #fc-year { font-size: 11px; color: rgba(255,255,255,0.35); margin-top: 2px; }
+  #fc-embed { position: fixed; bottom: -2px; right: -2px; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: none; }
+
+  /* ── Player bar (bottom, iOS glass) ── */
+  #player-bar {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
+    display: flex; align-items: center; gap: 14px;
+    background: rgba(10,10,16,0.75); backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 32px; padding: 8px 20px 8px 10px;
+    z-index: 40; min-width: 320px; max-width: 480px;
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+    opacity: 0; pointer-events: none;
+    transition: opacity .35s, transform .35s;
+  }
+  #player-bar.on { opacity: 1; pointer-events: all; transform: translateX(-50%) translateY(0); }
+  #pb-thumb {
+    width: 44px; height: 44px; border-radius: 10px;
+    object-fit: cover; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  #pb-info { flex: 1; min-width: 0; width: 160px; max-width: 160px; overflow: hidden; }
+  #pb-title {
+    font-size: 13px; font-weight: 600; color: #fff;
+    white-space: nowrap; overflow: hidden;
+    display: inline-block; width: 100%;
+  }
+  #pb-title.scrolling {
+    animation: pb-scroll 8s linear 1s infinite;
+  }
+  @keyframes pb-scroll {
+    0%   { transform: translateX(0); }
+    40%  { transform: translateX(var(--scroll-dist)); }
+    60%  { transform: translateX(var(--scroll-dist)); }
+    100% { transform: translateX(0); }
+  }
+  #pb-artist { font-size: 11px; color: rgba(255,255,255,0.45); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pb-progress-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; border-radius: 0 0 32px 32px; overflow: hidden; background: rgba(255,255,255,0.08); }
+  #pb-progress-fill { height: 100%; width: 0%; background: rgba(255,255,255,0.45); transition: width .5s linear; border-radius: 0 0 32px 32px; }
+  #pb-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  .pb-btn {
+    width: 32px; height: 32px; background: none; border: none;
+    color: rgba(255,255,255,0.7); font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; transition: background .12s, color .12s;
+  }
+  .pb-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+  #pb-play { width: 36px; height: 36px; font-size: 18px; color: #fff; }
+
+  /* ── Loading ── */
+  #loading { position: fixed; inset: 0; background: #050508; z-index: 500;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity .8s; font-family: -apple-system, sans-serif; }
+  #ld-label { font-size: 11px; letter-spacing: .1em; color: rgba(255,255,255,0.4); margin-bottom: 14px; }
+  #ld-track { width: 160px; height: 1px; background: rgba(255,255,255,0.1); }
+  #ld-fill { height: 100%; width: 0%; background: rgba(255,255,255,0.4); transition: width .08s; }
+  /* ── 开屏引导浮层 ── */
+  #intro-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(3,3,8,0.78); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+    transition: opacity .35s;
+  }
+  #intro-overlay.hidden { opacity: 0; pointer-events: none; }
+  #intro-box {
+    width: 380px; max-width: calc(100vw - 40px);
+    background: rgba(14,14,20,0.95);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 16px; padding: 24px 24px 20px;
+    color: rgba(255,255,255,0.82);
+  }
+  #intro-title { font-size: 17px; font-weight: 700; color:#fff; margin-bottom: 12px; }
+  .intro-p { font-size: 13px; line-height: 1.6; color: rgba(255,255,255,0.7); margin-bottom: 12px; }
+  .intro-p b { color: rgba(255,255,255,0.92); font-weight: 600; }
+  .intro-p a { color: #6ab3ff; text-decoration: none; }
+  .intro-p a:hover { text-decoration: underline; }
+  .intro-p code { background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .intro-det { font-size: 13px; margin-bottom: 16px; }
+  .intro-det summary { cursor: pointer; color: rgba(255,255,255,0.6); padding: 4px 0; }
+  .intro-det summary:hover { color: rgba(255,255,255,0.85); }
+  #intro-close {
+    width: 100%; padding: 11px; border-radius: 10px;
+    background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+    color: #fff; font-size: 14px; cursor: pointer; transition: background .15s;
+  }
+  #intro-close:hover { background: rgba(255,255,255,0.2); }
+
+  /* ── 播放器常驻提示 ── */
+  #pb-hint {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    margin-bottom: 8px; white-space: nowrap;
+    font-size: 10px; color: rgba(255,255,255,0.5);
+    background: rgba(10,10,16,0.85); padding: 4px 12px; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    pointer-events: none;
+    font-family: -apple-system, sans-serif;
+  }
+
+  /* ── 会员歌 pop-up ── */
+  #vip-pop {
+    position: fixed; inset: 0; z-index: 210;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(3,3,8,0.6); backdrop-filter: blur(4px);
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+  }
+  #vip-pop.on { display: flex; }
+  #vip-box {
+    width: 340px; max-width: calc(100vw - 40px);
+    background: rgba(16,16,24,0.96);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 16px; padding: 22px 22px 18px;
+    text-align: center;
+  }
+  #vip-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+  #vip-desc { font-size: 13px; line-height: 1.6; color: rgba(255,255,255,0.65); margin-bottom: 18px; }
+  #vip-btns { display: flex; flex-direction: column; gap: 9px; }
+  #vip-btns button {
+    width: 100%; padding: 11px; border-radius: 10px; font-size: 14px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.2); transition: background .15s;
+  }
+  #vip-login { background: rgba(220,60,70,0.85); color: #fff; border-color: rgba(220,60,70,0.5); }
+  #vip-login:hover { background: rgba(230,70,80,1); }
+  #vip-skip { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+  #vip-skip:hover { background: rgba(255,255,255,0.2); }
+
+  /* ── Expandable playlist panel (#4) ── */
+  #playlist-panel {
+    position: fixed; left: 24px; bottom: 70px; z-index: 60;
+    width: 300px; max-width: calc(100vw - 48px); max-height: 52vh;
+    background: rgba(12,12,18,0.92); backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+    display: flex; flex-direction: column; overflow: hidden;
+    opacity: 0; pointer-events: none; transform: translateY(10px) scale(0.98);
+    transition: opacity .25s, transform .25s;
+    font-family: -apple-system, sans-serif;
+  }
+  #playlist-panel.on { opacity: 1; pointer-events: all; transform: translateY(0) scale(1); }
+  #pp-head { display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); flex-shrink: 0; }
+  #pp-title { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.85); letter-spacing: .02em; }
+  #pp-close { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.08);
+    border: none; color: rgba(255,255,255,0.7); font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; }
+  #pp-close:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  #pp-list { overflow-y: auto; padding: 6px 0; }
+  .pp-row { display: flex; align-items: center; gap: 9px; padding: 8px 14px; cursor: pointer;
+    transition: background .12s; }
+  .pp-row:hover { background: rgba(255,255,255,0.07); }
+  .pp-row.playing { background: rgba(255,255,255,0.1); }
+  .pp-row.playing .pp-name { color: #fff; }
+  .pp-idx { font-size: 10px; color: rgba(255,255,255,0.3); width: 20px; flex-shrink: 0; text-align: right; }
+  .pp-meta { min-width: 0; flex: 1; }
+  .pp-name { font-size: 12px; color: rgba(255,255,255,0.78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pp-ar { font-size: 10px; color: rgba(255,255,255,0.38); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .pp-vip { font-size: 8px; font-weight: 700; color: rgba(255,180,80,0.9); border: 1px solid rgba(255,180,80,0.5);
+    border-radius: 3px; padding: 0 3px; flex-shrink: 0; letter-spacing: .05em; }
+
+  /* ── Lyrics panel (#9) ── */
+  #lyrics-panel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    margin-left: 200px;            /* sit to the right of the focus card */
+    width: 300px; max-width: 36vw; max-height: 60vh;
+    z-index: 95; pointer-events: none;
+    opacity: 0; transition: opacity .35s;
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+    -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent);
+            mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent);
+    overflow: hidden;
+  }
+  #lyrics-panel.on { opacity: 1; }
+  #lp-scroll { transition: transform .4s ease; }
+  .lp-line { font-size: 14px; line-height: 2.0; color: rgba(255,255,255,0.32);
+    text-align: left; transition: color .3s, font-size .3s; padding: 1px 0; }
+  .lp-line.active { color: #fff; font-size: 16px; font-weight: 600; }
+  #lp-empty { font-size: 12px; color: rgba(255,255,255,0.3); text-align: center; padding: 20px 0; }
+  /* lyrics toggle button inside focus card */
+  #fc-lyrics-toggle {
+    position: absolute; top: 12px; left: 12px; z-index: 5;
+    height: 28px; padding: 0 12px; border-radius: 14px;
+    background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.75); font-size: 11px; cursor: pointer;
+    display: flex; align-items: center; gap: 5px;
+    transition: background .15s; font-family: -apple-system, sans-serif;
+  }
+  #fc-lyrics-toggle:hover { background: rgba(255,255,255,0.15); color: #fff; }
+
+  /* ── Player progress with time (#8) ── */
+  #pb-times { display: flex; align-items: center; gap: 5px; font-size: 9px;
+    color: rgba(255,255,255,0.4); font-family: -apple-system, sans-serif;
+    flex-shrink: 0; white-space: nowrap; letter-spacing: .02em; }
+  #pb-times .sep { opacity: .5; }
+
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- (left sidebar removed — search/library buttons were dead; replaced by expandable playlist in bottom-left) -->
+
+<!-- HUD top-left -->
+<div id="hud-tl">
+  <div class="ht-logo">⌾</div>
+  <div>
+    <div class="ht-title">Infinite Canvas</div>
+    <div class="ht-sub" id="ht-sub">78 首 · 治愈纯音乐</div>
+  </div>
+</div>
+
+<!-- HUD top-right -->
+<div id="hud-tr">
+  <div class="li">
+    <span class="li-icon">⊕</span>
+    <div><div class="li-key">DRAG</div><div class="li-desc">Pan</div></div>
+  </div>
+  <div class="li">
+    <span class="li-icon">↕</span>
+    <div><div class="li-key">SCROLL</div><div class="li-desc">Zoom</div></div>
+  </div>
+  <div class="li">
+    <span class="li-icon">⊡</span>
+    <div><div class="li-key">DOUBLE CLICK</div><div class="li-desc">Focus</div></div>
+  </div>
+</div>
+
+<!-- Crosshair -->
+<div id="crosshair">
+  <div class="c-corner c-tl"></div><div class="c-corner c-tr"></div>
+  <div class="c-corner c-bl"></div><div class="c-corner c-br"></div>
+  <div class="c-dot"></div>
+</div>
+
+<!-- Browse-state toolbar -->
+<div id="toolbar">
+  <button class="tb-btn" id="tb-shuffle" title="随机播放">⇄</button>
+  <button class="tb-btn" id="tb-loop" title="循环模式">◎</button>
+  <button class="tb-btn" id="tb-center" title="镜头归位">⊕</button>
+  <div class="tb-sep"></div>
+  <span id="tb-label">点击任意封面开始</span>
+  <div class="tb-sep"></div>
+  <div class="tb-vol">
+    <span class="tb-vol-icon">♪</span>
+    <input type="range" id="vol-slider" min="0" max="100" value="75">
+  </div>
+</div>
+
+<!-- (decade timeline removed — meaningless for instrumental playlist) -->
+
+<!-- User info (click to open playlist) -->
+<div id="hud-user" title="展开歌单">
+  <div class="u-av" id="u-av">♪</div>
+  <div>
+    <div class="u-name">治愈系歌单</div>
+    <div class="u-sub">78 首 · 治愈纯音乐</div>
+  </div>
+</div>
+
+<!-- Expandable playlist panel -->
+<div id="playlist-panel">
+  <div id="pp-head">
+    <span id="pp-title">治愈系歌单 · 78 首</span>
+    <button id="pp-close" title="收起">×</button>
+  </div>
+  <div id="pp-list"></div>
+</div>
+
+<!-- Artist labels -->
+<div id="artist-labels"></div>
+
+<!-- Focus glass card -->
+<div id="focus-card">
+  <div id="fc-art">
+    <button id="fc-lyrics-toggle">♫ 歌词</button>
+    <button id="fc-close">×</button>
+    <img id="fc-img" src="" alt="">
+  </div>
+  <div id="fc-info">
+    <div id="fc-title"></div>
+    <div id="fc-artist"></div>
+    <div id="fc-year"></div>
+  </div>
+  <iframe id="fc-embed" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+</div>
+
+<!-- Lyrics panel (time-synced) -->
+<div id="lyrics-panel">
+  <div id="lp-scroll"></div>
+</div>
+
+
+<!-- Player bar (persistent bottom player) -->
+<div id="player-bar">
+  <img id="pb-thumb" src="" alt="">
+  <div id="pb-info">
+    <div id="pb-title">—</div>
+    <div id="pb-artist">—</div>
+  </div>
+  <div id="pb-controls">
+    <button class="pb-btn" id="pb-prev" title="上一首">&#9664;&#9664;</button>
+    <button class="pb-btn" id="pb-play" title="播放/暂停">&#9654;</button>
+    <button class="pb-btn" id="pb-next" title="下一首">&#9654;&#9654;</button>
+  </div>
+  <div id="pb-progress-wrap"><div id="pb-progress-fill"></div></div>
+  <div id="pb-times"><span id="pb-cur">0:00</span><span class="sep">/</span><span id="pb-dur">0:00</span></div>
+  <div id="pb-hint">部分会员歌曲可能无法试听</div>
+</div>
+
+<!-- (FPS counter removed) -->
+
+<!-- Loading -->
+<div id="loading">
+  <div id="ld-label">加载封面中… 0 / 78</div>
+  <div id="ld-track"><div id="ld-fill"></div></div>
+</div>
+
+<!-- Three.js r128 + post-processing (load order matters) -->
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/shaders/BokehShader.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/BokehPass.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// DATA  (60 tracks, Post-Britpop)
+// ═══════════════════════════════════════════════════════════
+const TRACKS = [
+  {"id":3357711182,"name":"花信子","ar":["心语馆"],"alName":"花信子","alPicUrl":"https://p2.music.126.net/dOAZT8apuhXKOM26eiwgfA==/109951172865261691.jpg","fee":8},
+  {"id":2682678391,"name":"逃向春天","ar":["凌晨一点的莱茵猫","心语馆"],"alName":"Flee towards Spring","alPicUrl":"https://p2.music.126.net/c5L3cDpqOXV3-QZzxKfPCg==/109951170586448192.jpg","fee":8},
+  {"id":3382255069,"name":"夏 日 回 响 (Midsummer Reprise)","ar":["凌晨一点的莱茵猫"],"alName":"Midsummer Reprise","alPicUrl":"https://p2.music.126.net/pWW-Fw1AdYBMHZtIQb0jdQ==/109951173223895622.jpg","fee":8},
+  {"id":2719313745,"name":"蝶之心 (Lepidary)","ar":["心语馆"],"alName":"Lepidary","alPicUrl":"https://p2.music.126.net/pZz4J3VuuYGxUy46UTj_rA==/109951172419177552.jpg","fee":8},
+  {"id":2699754024,"name":"无尽幸福","ar":["凌晨一点的莱茵猫","二乘"],"alName":"Boundless bliss","alPicUrl":"https://p2.music.126.net/R7pahY_SeIUeEcKRNNtxvg==/109951170921327614.jpg","fee":8},
+  {"id":2055540515,"name":"暮春","ar":["CMJ"],"alName":"暮春","alPicUrl":"https://p2.music.126.net/yfMAY28BsODV6OMek54xLw==/109951168677458340.jpg","fee":8},
+  {"id":3363847434,"name":"拾光","ar":["凌晨一点的莱茵猫","二乘"],"alName":"拾光","alPicUrl":"https://p2.music.126.net/7XvzDUtGqKLQ3-9E5QyjoA==/109951172996816046.jpg","fee":8},
+  {"id":3316277379,"name":"花之浪漫 (Petal whisper)","ar":["心语馆","凌晨一点的莱茵猫"],"alName":"花之浪漫","alPicUrl":"https://p2.music.126.net/D7T8LXN6_Cq4O3dMqfRs5w==/109951172453254361.jpg","fee":8},
+  {"id":3323668937,"name":"下一秒是幸福 (Bliss in Next)","ar":["凌晨一点的莱茵猫"],"alName":"下一秒是幸福","alPicUrl":"https://p2.music.126.net/imRD_ow7SWiWlXspi60yWQ==/109951172370373139.jpg","fee":8},
+  {"id":2700474276,"name":"氤氲之森","ar":["CMJ"],"alName":"氤氲之森","alPicUrl":"https://p2.music.126.net/d86bVXiqiN-wCBexxOBCsw==/109951170929793456.jpg","fee":8},
+  {"id":3363655182,"name":"不辞春","ar":["二乘"],"alName":"不辞春","alPicUrl":"https://p2.music.126.net/c8Ir35oZa628Rqh4onQqcg==/109951172948379039.jpg","fee":8},
+  {"id":2686282515,"name":"晨曲（morning mood）","ar":["MT1990"],"alName":"晨曲（morning mood）","alPicUrl":"https://p2.music.126.net/BX3z8210gbQ8P0D04aeHsg==/109951170627328901.jpg","fee":8},
+  {"id":2743191463,"name":"惊鸿一梦","ar":["凌晨一点的莱茵猫","心语馆"],"alName":"惊鸿一梦","alPicUrl":"https://p2.music.126.net/1YOmM4FoaHGrAW6U9wtWRA==/109951171998586275.jpg","fee":8},
+  {"id":2672540472,"name":"涟漪","ar":["CMJ"],"alName":"涟漪","alPicUrl":"https://p2.music.126.net/hB3rUJ9WkqXi-MnpRduDNw==/109951170457858289.jpg","fee":8},
+  {"id":2651898735,"name":"森之境","ar":["Hea2t"],"alName":"森之境","alPicUrl":"https://p2.music.126.net/Ne-rAaOWt1XsD74E93NybQ==/109951170206995318.jpg","fee":8},
+  {"id":2682141606,"name":"潜入绿色的梦里","ar":["Hea2t"],"alName":"潜入绿色的梦里","alPicUrl":"https://p2.music.126.net/tbeC-9WJ9uQdNn04WzUEvw==/109951170567674503.jpg","fee":8},
+  {"id":2150491694,"name":"3:03 PM","ar":["しゃろう"],"alName":"3:03 PM","alPicUrl":"https://p2.music.126.net/aT_cuUY89hFsK7NMFd91uw==/109951169541178367.jpg","fee":0},
+  {"id":2695577663,"name":"春山花雨落 (Spring blooms rain)","ar":["凌晨一点的莱茵猫"],"alName":"春山花雨落(Spring blooms rain)","alPicUrl":"https://p2.music.126.net/ehhTQC26ZnLoHuQFouh2uA==/109951170731507414.jpg","fee":8},
+  {"id":1891146284,"name":"【Free】云端飞行","ar":["Lisure"],"alName":"【Free】云端飞行","alPicUrl":"https://p2.music.126.net/8i4uxbTqLGQYCDRzsGYnRg==/109951167005269927.jpg","fee":8},
+  {"id":2647050067,"name":"竹子物语","ar":["于行","仁辰"],"alName":"竹子物语","alPicUrl":"https://p2.music.126.net/HhLAtiRamWHDkzHNgpfCAQ==/109951170156630382.jpg","fee":0},
+  {"id":2631270397,"name":"万物与我, 都是自由诗","ar":["Hea2t"],"alName":"万物与我, 都是自由诗","alPicUrl":"https://p2.music.126.net/cLTChdoO9SyP2xkvK0UYcQ==/109951169995040390.jpg","fee":8},
+  {"id":1398802958,"name":"We've Never Met but Can We Have a Cup of Coffee or Something","ar":["In Love With A Ghost"],"alName":"Let's Go","alPicUrl":"https://p2.music.126.net/Xbvzyh9MqNKixDIb4Lq-gQ==/109951164445310569.jpg","fee":8},
+  {"id":521935820,"name":"❀","ar":["nevva"],"alName":"❀","alPicUrl":"https://p2.music.126.net/ZvYHj8W72RwrnOJiOGaL9g==/109951163074555333.jpg","fee":8},
+  {"id":2001541211,"name":"阳光穿过了树叶之间的缝隙","ar":["Hea2t"],"alName":"阳光穿过了树叶之间的缝隙","alPicUrl":"https://p2.music.126.net/DLLpk-BzQqqJzvDnrtKP4w==/109951168089806116.jpg","fee":8},
+  {"id":2131980961,"name":"生活细碎，万物成诗","ar":["Hea2t"],"alName":"生活细碎，万物成诗","alPicUrl":"https://p2.music.126.net/5mj0rMcjZXM2wgtvhU9lOQ==/109951169382848377.jpg","fee":0},
+  {"id":1869507838,"name":"汐渐","ar":["MoFeansy","Warsic"],"alName":"鲸与你","alPicUrl":"https://p2.music.126.net/f4C5RJuOdVsgdQKWIa0q-g==/109951166293535072.jpg","fee":8},
+  {"id":2139294992,"name":"花日","ar":["CMJ"],"alName":"花日","alPicUrl":"https://p2.music.126.net/XB-vD5BH1FgvGPfh_Ut9BQ==/109951169445464429.jpg","fee":8},
+  {"id":2027107811,"name":"春野","ar":["夏小调"],"alName":"春の野","alPicUrl":"https://p2.music.126.net/E6JUAzvIdM_XZnp8G9O1kQ==/109951168439518997.jpg","fee":8},
+  {"id":2612980930,"name":"记忆中的你（神圣）","ar":["拓金Takuau"],"alName":"记忆中的你（神圣）","alPicUrl":"https://p1.music.126.net/4M6V7NvraxIFnVDR-gITSQ==/109951169832148871.jpg","fee":8},
+  {"id":2642878033,"name":"Heartstrings tug (心弦牵动)","ar":["凌晨一点的莱茵猫"],"alName":"Heartstrings tug","alPicUrl":"https://p1.music.126.net/hcw2kx1hKdBGp2v5U8jaxg==/109951170114713212.jpg","fee":8},
+  {"id":3325298797,"name":"春溯","ar":["二乘"],"alName":"春溯","alPicUrl":"https://p1.music.126.net/AS7y5r9EHgJ_2c7Sftb4NA==/109951172388814178.jpg","fee":8},
+  {"id":2164674517,"name":"infp","ar":["Hea2t"],"alName":"infp","alPicUrl":"https://p1.music.126.net/uIdvzs19TnSlYtUtZyMpuw==/109951169668182879.jpg","fee":8},
+  {"id":1379958635,"name":"时落叶影","ar":["Maple暖枫"],"alName":"时落叶影","alPicUrl":"https://p1.music.126.net/jX1php_WEbPe0CI6U3dXFg==/109951164237186640.jpg","fee":0},
+  {"id":2093433056,"name":"Ethereal","ar":["txmy"],"alName":"Ethereal","alPicUrl":"https://p1.music.126.net/HDlXcbUwFf9YXObc8aZ2aQ==/109951170245612849.jpg","fee":8},
+  {"id":2604121612,"name":"活下去（纯音乐）","ar":["天逸","鹤A","小欣","不识君"],"alName":"Gone（纯音乐）","alPicUrl":"https://p1.music.126.net/OzTSWJtggZyyTs6uiRWxyg==/109951168994159430.jpg","fee":8},
+  {"id":1376797714,"name":"Married Life (Music Box Version)","ar":["Henry William"],"alName":"Music Box Lullabies, Vol. 1","alPicUrl":"https://p1.music.126.net/iaYYUTtr5JQu8yj9ncIBBQ==/109951164797609798.jpg","fee":8},
+  {"id":1890756154,"name":"it's 6pm but I miss u already.","ar":["BlueLee","Furyl","Siren"],"alName":"it's 6pm but I miss u already.","alPicUrl":"https://p1.music.126.net/vfArwmf4yUKmZhi-ZCwOXA==/109951166569406479.jpg","fee":8},
+  {"id":2059374421,"name":"Ditto","ar":["DooPiano"],"alName":"Ditto","alPicUrl":"https://p1.music.126.net/JwCy9UsY0F53GMCRRbzLOg==/109951168703587635.jpg","fee":8},
+  {"id":1458364439,"name":"夏天的雨（Summer rain）（钢琴曲）","ar":["屯叔UncleTune"],"alName":"夏至日记","alPicUrl":"https://p1.music.126.net/Ut-htsqLPKhjpo1cQIxQRQ==/109951165092065782.jpg","fee":8},
+  {"id":2644843207,"name":"微风和煦","ar":["Hea2t"],"alName":"微风和煦","alPicUrl":"https://p1.music.126.net/23C486uyuflzkZO1kReKGw==/109951170133744571.jpg","fee":8},
+  {"id":2647582426,"name":"Tyndall","ar":["Youzee Music"],"alName":"丁达尔的梦","alPicUrl":"https://p1.music.126.net/uPeYnxVCcG3L1jyNfpWEHA==/109951170243924736.jpg","fee":8},
+  {"id":2086787359,"name":"溺悬","ar":["路灰气球"],"alName":"溺悬","alPicUrl":"https://p1.music.126.net/Z_h1oPiPmglIdaMGpQwPcQ==/109951168953006294.jpg","fee":8},
+  {"id":494642794,"name":"magnolia","ar":["keshi"],"alName":"magnolia","alPicUrl":"https://p1.music.126.net/51MhPlXdP3edwqML9SxbZA==/109951168789051293.jpg","fee":8},
+  {"id":2061601253,"name":"北冥","ar":["路灰气球"],"alName":"北冥","alPicUrl":"https://p1.music.126.net/BnaAPtBxKWAwiuVzoJTZvA==/109951168719384709.jpg","fee":8},
+  {"id":2626791766,"name":"我的夏天是一场绿意交错的梦境","ar":["Hea2t"],"alName":"我的夏天是一场绿意交错的梦境","alPicUrl":"https://p1.music.126.net/dcKiZfqY7MTJb7LnZ7-5vw==/109951169957290710.jpg","fee":8},
+  {"id":517346741,"name":"Gypsophila","ar":["MoreanP"],"alName":"Gypsophila","alPicUrl":"https://p1.music.126.net/I6L-jkmBdicjAGU64ZsfRw==/109951163057015842.jpg","fee":8},
+  {"id":1966523854,"name":"蜜桃物语","ar":["仁辰","于行"],"alName":"蜜桃物语","alPicUrl":"https://p1.music.126.net/-F3Th9p8ye2-LqEu5oqEBw==/109951169043319659.jpg","fee":0},
+  {"id":2141357358,"name":"葡萄物语","ar":["于行","仁辰"],"alName":"葡萄物语","alPicUrl":"https://p1.music.126.net/B8rnqzbau8Nj9-PumiWbdQ==/109951169460060739.jpg","fee":0},
+  {"id":464863017,"name":"烟袋斜街","ar":["接个吻，开一枪","SaMZIng"],"alName":"烟袋斜街","alPicUrl":"https://p1.music.126.net/tTRaVql9l0ZwQ2Y3oSZ9pQ==/109951162874838750.jpg","fee":8},
+  {"id":480353,"name":"いつも何度でも","ar":["宗次郎"],"alName":"Prime Selection","alPicUrl":"https://p1.music.126.net/ygxAeYxxXPONww041tylMw==/5996736418028563.jpg","fee":8},
+  {"id":2052124155,"name":"鸟之诗 (长笛)","ar":["老伙计"],"alName":"童叟","alPicUrl":"https://p1.music.126.net/Xe2Dro4eSbZp19RXQKH2TA==/109951168650831183.jpg","fee":8},
+  {"id":2019035410,"name":"convolk - gone（纯音乐)","ar":["ZsFlovexl","Jcy East","LightG"],"alName":"convolk - gone（Inst.)","alPicUrl":"https://p1.music.126.net/MpRxRkoUuzyxl1ZPSEgXZg==/109951168277401055.jpg","fee":8},
+  {"id":1415706303,"name":"萤火之森","ar":["CMJ"],"alName":"萤火之森","alPicUrl":"https://p1.music.126.net/jNh5VIYGzc74RFPMv_TouQ==/109951164615554163.jpg","fee":8},
+  {"id":1872464912,"name":"璀星湖","ar":["Maple暖枫"],"alName":"璀星湖","alPicUrl":"https://p1.music.126.net/ohft9SXDhD9wN2mTlfalOA==/109951166318039423.jpg","fee":8},
+  {"id":2085045497,"name":"活着就是一种伟大","ar":["Maple暖枫"],"alName":"活着就是一种伟大","alPicUrl":"https://p1.music.126.net/QeXscV_m8uriJ-rt6EQPZQ==/109951168939820951.jpg","fee":8},
+  {"id":2040870797,"name":"流萤之森","ar":["天逸"],"alName":"流萤之森","alPicUrl":"https://p1.music.126.net/GWMGk0dblMTI2P9HpOt-zA==/109951169743356182.jpg","fee":8},
+  {"id":1835048360,"name":"小水鲸","ar":["Maple暖枫"],"alName":"小水鲸","alPicUrl":"https://p1.music.126.net/MRvZvVWSno5mrRfq3-hcng==/109951165864765377.jpg","fee":0},
+  {"id":2013750367,"name":"新生","ar":["leomantic"],"alName":"新生","alPicUrl":"https://p1.music.126.net/qnco-vO6kLkl2l6yp74GFQ==/109951168212021441.jpg","fee":0},
+  {"id":2164890997,"name":"风居海铃","ar":["Maple暖枫"],"alName":"风居海铃","alPicUrl":"https://p1.music.126.net/uxFyi-CnZPy6tFQGVRn9OA==/109951169670812407.jpg","fee":0},
+  {"id":2038191895,"name":"诀别书","ar":["邓垚"],"alName":"诀别书","alPicUrl":"https://p1.music.126.net/wztA5smxFjIfv98u7-IrQQ==/109951168933355255.jpg","fee":8},
+  {"id":2070928072,"name":"katakoto beat(instrumental)","ar":["beer"],"alName":"katakoto BEAT LOFI","alPicUrl":"https://p1.music.126.net/AmXzWyBGr76I2uR3LzHokw==/109951168820699369.jpg","fee":8},
+  {"id":2004933459,"name":"Cornfield Chase in Golden hour","ar":["Yiiiko"],"alName":"Cornfield Chase in Golden hour","alPicUrl":"https://p1.music.126.net/FhwjoTHmo5DwTzaHLPfbig==/109951168125639042.jpg","fee":0},
+  {"id":1997298668,"name":"莲池夜月","ar":["张渠"],"alName":"莲池夜月","alPicUrl":"https://p1.music.126.net/3k_xmTs0zPF6GOtHjkbJ1w==/109951168060381041.jpg","fee":8},
+  {"id":1945857126,"name":"爱丽丝梦游仙境","ar":["幻想少女"],"alName":"爱丽丝梦游仙境","alPicUrl":"https://p1.music.126.net/VtTKhHCbGL1ngvWn7UCrHw==/109951167394029437.jpg","fee":8},
+  {"id":2015105945,"name":"Garden of Lucy","ar":["Maple暖枫"],"alName":"Garden of Lucy","alPicUrl":"https://p1.music.126.net/NXg8A2fnaLtVxGSNKuBGcA==/109951168240347724.jpg","fee":0},
+  {"id":2126393152,"name":"Things You Said (Instrumental)","ar":["Cody Fry"],"alName":"Things You Said","alPicUrl":"https://p1.music.126.net/3Ct4MsO2tueGfkq_kTwEFA==/109951169336193558.jpg","fee":1},
+  {"id":2602523834,"name":"Forest Mixtape（Tsuki)","ar":["灵魂配乐师"],"alName":"Forest Mixtape（Tsuki)","alPicUrl":"https://p1.music.126.net/rzqHmzcPoyTLRTO0bxzxzg==/109951169725640777.jpg","fee":8},
+  {"id":1824025281,"name":"Love Birds","ar":["Snail's House"],"alName":"Love Songs","alPicUrl":"https://p1.music.126.net/knbTBl4atxPtKW1ftDM7_A==/109951165776399435.jpg","fee":1},
+  {"id":494858498,"name":"pure imagination","ar":["Rook1e","J'san"],"alName":"pure imagination","alPicUrl":"https://p1.music.126.net/dDM3Emm_CXHy4NZHSdU0iQ==/19127104277054005.jpg","fee":8},
+  {"id":557579751,"name":"Sleepy Story.","ar":["barnes blvd."],"alName":"Last Summer","alPicUrl":"https://p1.music.126.net/1cb3zkiL7LY68UGU3KiL5Q==/109951166210611320.jpg","fee":8},
+  {"id":2089844456,"name":"暮春","ar":["Vuxa"],"alName":"季物语：春","alPicUrl":"https://p1.music.126.net/jL92uWt1sAxSfcl0SWw-Sg==/109951168974665618.jpg","fee":8},
+  {"id":1441250313,"name":"flower.","ar":["L1VET.."],"alName":"flower.","alPicUrl":"https://p1.music.126.net/iYbET_axs7h7ZwbsE74IhA==/109951164913288173.jpg","fee":8},
+  {"id":2143288478,"name":"我的生命是一万次的春和景明","ar":["Hea2t"],"alName":"我的生命是一万次的春和景明","alPicUrl":"https://p1.music.126.net/wXLXLvqovVU7Os5HPLYmCw==/109951169476381035.jpg","fee":8},
+  {"id":2025578376,"name":"落樱谷","ar":["路灰气球"],"alName":"落樱谷","alPicUrl":"https://p1.music.126.net/3llYvJ7VLTL2xJ75lrxLww==/109951168424830967.jpg","fee":8},
+  {"id":2616185152,"name":"Bubble of Magnetic Ditto","ar":["Yiiiko"],"alName":"Bubble of Magnetic Ditto","alPicUrl":"https://p1.music.126.net/AGiaPcDP-WShghlBd3Qa4g==/109951169861415090.jpg","fee":8},
+  {"id":2641006978,"name":"黄昏之时","ar":["鱼摆摆"],"alName":"睡个好觉","alPicUrl":"https://p1.music.126.net/EXXKue4IWcleSqGbnk6FTA==/109951170090623300.jpg","fee":8},
+  {"id":557850882,"name":"盛夏与蝉鸣","ar":["Hea2t"],"alName":"盛夏与蝉鸣","alPicUrl":"https://p1.music.126.net/9-y7VSP3ALHv0-LLhefVNQ==/109951163283980568.jpg","fee":8},
+  {"id":2115904437,"name":"Criticalpoint","ar":["凌晨一点的莱茵猫"],"alName":"Criticalpoint","alPicUrl":"https://p1.music.126.net/n2EHhfsBffwcLFEc8bV71w==/109951169247378753.jpg","fee":8}
+];
+
+// ═══════════════════════════════════════════════════════════
+// LYRICS  (id -> LRC string, time-stamped)   #9
+// DURATIONS (id -> seconds)                    #8
+// ───────────────────────────────────────────────────────────
+// 这两张表先留占位。等本地 curl 网易云 /api/song/lyric 和 dt 字段后填入：
+//   LYRICS[id] = "[00:00.00]词\n[00:12.30]词\n..."   (lrc + 时间戳)
+//   DURATIONS[id] = 秒数 (来自 song detail 的 dt 字段 / 1000)
+// 没有数据的歌：歌词面板显示"暂无歌词"，时长回退到默认 4:00。
+// 下面放 1 条示例演示时间轴高亮如何工作（id 任选歌单内一首做 demo）。
+// ═══════════════════════════════════════════════════════════
+const LYRICS = {
+  // demo 占位（纯音乐多数无词；此条仅演示同步高亮，可删）
+  2150491694: "[00:00.00]3:03 PM\n[00:05.00]instrumental\n[00:15.00]· · ·\n[00:30.00]（纯音乐 · 暂无歌词）\n[00:45.00]· · ·"
+};
+const DURATIONS = {
+  // 例: 2150491694: 183
+};
+
+// ═══════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════
+const BASE_CARD = 4.2;
+const FOG_COLOR = 0x050508;
+// ── 性能开关 ──────────────────────────────────────────────────
+// 如果实测拖动时 fps < 50，把下面这行改为 false，保存刷新即可
+// 伪景深（距离暗化）仍然生效，帧率预计恢复到 ~120fps
+// ─────────────────────────────────────────────────────────────
+const USE_DOF = false;   // ← 改这里：true = 真 BokehDOF，false = 关闭
+
+// Artist cluster 3D centers
+const CLUSTER = {
+  'Coldplay':        { x:-14, y: 2, z:-18 },
+  'Muse':            { x: 12, y:-3, z:-14 },
+  'Travis':          { x: -7, y: 4, z:-34 },
+  'Stereophonics':   { x: 16, y: 2, z:-26 },
+  'Snow Patrol':     { x:-20, y:-2, z:-12 },
+  'Keane':           { x:  4, y: 4, z:-50 },
+  'Oasis':           { x:-18, y: 0, z:-40 },
+  'The Libertines':  { x: 18, y:-3, z:-30 },
+  'Elbow':           { x:-6, y:-3, z:-55 },
+  'Starsailor':      { x: 19, y: 3, z:-46 },
+  'Athlete':         { x:-16, y: 2, z:-60 },
+  'Doves':           { x:  7, y:-6, z:-22 },
+  'Rialto':          { x:-13, y: 4, z:-46 },
+  'Aqualung':        { x: 14, y: 0, z:-60 },
+  'Mansun':          { x: -3, y:-4, z:-70 },
+  'The Verve':       { x: 7, y: 2, z:-78 },
+  'Haven':           { x:-10, y:-2, z:-74 },
+  'JJ72':            { x: 18, y:-3, z:-54 },
+  'Thirteen Senses': { x:-6, y: 4, z:-64 },
+};
+
+// ═══════════════════════════════════════════════════════════
+// THREE.JS SETUP
+// ═══════════════════════════════════════════════════════════
+const W = window.innerWidth, H = window.innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.autoClear = false;   // required for EffectComposer
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(FOG_COLOR);
+scene.fog = new THREE.FogExp2(FOG_COLOR, 0.008);
+
+// Camera: near=0.5 far=120, tighter range → better DOF depth precision
+const camera = new THREE.PerspectiveCamera(65, W / H, 0.5, 300);
+
+// ═══════════════════════════════════════════════════════════
+// POST-PROCESSING  —  EffectComposer + BokehPass
+// ═══════════════════════════════════════════════════════════
+// BokehPass uses depth buffer to compute per-pixel blur.
+// focus: NDC depth value 0-1 (1=far). For our scene (near=0.5,far=120):
+// Objects at ~20 units → NDC depth ≈ (120+0.5-2*0.5*120/20)/(120-0.5) ≈ 0.952
+// Objects at ~50 units → NDC depth ≈ 0.982
+// We focus at 0.97 (≈25-30 units, near cluster zone)
+const composer = new THREE.EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene, camera));
+
+const bokehPass = new THREE.BokehPass(scene, camera, {
+  focus:    0.97,    // NDC focus depth (near clusters)
+  aperture: 0.004,   // aperture: higher = more blur for out-of-focus objects
+  maxblur:  0.014,   // max blur radius (fraction of screen)
+  width: W, height: H
+});
+bokehPass.renderToScreen = true;
+composer.addPass(bokehPass);
+
+// ═══════════════════════════════════════════════════════════
+// STARFIELD PARTICLES
+// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// STARFIELD PARTICLES
+// ═══════════════════════════════════════════════════════════
+const STAR_N = 2500;
+const starPos = new Float32Array(STAR_N * 3);
+const starPhase = new Float32Array(STAR_N);
+for (let i = 0; i < STAR_N; i++) {
+  starPos[i*3]   = (Math.random() - 0.5) * 220;
+  starPos[i*3+1] = (Math.random() - 0.5) * 100;
+  starPos[i*3+2] = (Math.random() - 0.5) * 180 - 30;
+  starPhase[i]   = Math.random() * Math.PI * 2;
+}
+const starGeo = new THREE.BufferGeometry();
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+// per-star size variation for a more natural sky
+const starSize = new Float32Array(STAR_N);
+for (let i = 0; i < STAR_N; i++) starSize[i] = 0.5 + Math.random() * 1.6;
+starGeo.setAttribute('size', new THREE.BufferAttribute(starSize, 1));
+
+// ── 真·星光贴图：径向辉光圆点（替代方块像素）#10 ──
+function makeStarTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0,    'rgba(255,255,255,1)');
+  g.addColorStop(0.2,  'rgba(255,255,255,0.85)');
+  g.addColorStop(0.45, 'rgba(180,205,255,0.35)');
+  g.addColorStop(1,    'rgba(160,190,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(cv);
+  return tex;
+}
+const starTex = makeStarTexture();
+const starMat = new THREE.PointsMaterial({
+  map: starTex, color: 0xffffff, size: 1.1,
+  sizeAttenuation: true, transparent: true, opacity: 0.85,
+  depthWrite: false, blending: THREE.AdditiveBlending
+});
+const starField = new THREE.Points(starGeo, starMat);
+scene.add(starField);
+
+// 流星（发光拖尾，加色混合更亮）#10
+const METEOR_COUNT = 6;
+const meteors = [];
+function makeMeteor() {
+  const g = new THREE.BufferGeometry();
+  const pts = new Float32Array(6);
+  g.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({
+    color: 0xcfe2ff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  scene.add(m);
+  // 发光头部 sprite
+  const head = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: starTex, color: 0xffffff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  head.scale.setScalar(2.2);
+  scene.add(head);
+  return {
+    mesh: m, head,
+    active: false,
+    t: 0,
+    reset() {
+      this.active = true;
+      this.t = 0;
+      this.duration = 1.1 + Math.random() * 0.8;
+      this.ox = (Math.random() - 0.5) * 160;
+      this.oy = 18 + Math.random() * 32;
+      this.oz = (Math.random() - 0.5) * 110 - 20;
+      this.dx = (Math.random() - 0.3) * 70;
+      this.dy = -34 - Math.random() * 24;
+      this.dz = (Math.random() - 0.5) * 24;
+      this.len = 0.10 + Math.random() * 0.07;
+    }
+  };
+}
+for (let i = 0; i < METEOR_COUNT; i++) {
+  const mt = makeMeteor();
+  mt.nextAt = Math.random() * 2.5;
+  meteors.push(mt);
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════
+function seededRnd(s) { return ((s * 1664525 + 1013904223) & 0x7fffffff) / 0x7fffffff; }
+const PALETTE = [0x1a1a2e,0x16213e,0x0f3460,0x533483,0x2b2d42,0x3d405b,0x293241,0x1b4332,0x3b1f2b,0x2c3e50];
+function phColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (Math.imul(31,h) + name.charCodeAt(i)) | 0;
+  return PALETTE[Math.abs(h) % PALETTE.length];
+}
+
+// ═══════════════════════════════════════════════════════════
+// ARTIST INDEX
+// ═══════════════════════════════════════════════════════════
+const ARTISTS = {};
+TRACKS.forEach((t,i) => {
+  const ar = t.ar[0];
+  if (!ARTISTS[ar]) ARTISTS[ar] = [];
+  ARTISTS[ar].push(i);
+});
+
+function clusterOf(name, seed) {
+  if (CLUSTER[name]) return CLUSTER[name];
+  const a = seed * 2.399;
+  return { x: Math.cos(a)*18, y: (seededRnd(seed*77)-0.5)*10, z: -(seededRnd(seed*99)*55+20) };
+}
+
+// ═══════════════════════════════════════════════════════════
+// BUILD CARDS
+// ═══════════════════════════════════════════════════════════
+//
+// C3-B size layers: scale based on cluster Z depth.
+// Near clusters (z≈-12 to -20): scale 1.8–2.8  → LARGE
+// Mid clusters  (z≈-30 to -50): scale 0.9–1.4  → MEDIUM
+// Far clusters  (z≈-55 to -80): scale 0.35–0.65 → SMALL thumbnails
+//
+// depth range: z_near=-12, z_far=-80  → range=68
+// depthFactor = clamp((z - z_far)/(z_near - z_far), 0,1)  → 1=near, 0=far
+//
+const Z_NEAR_REF = -12, Z_FAR_REF = -80;
+const meshes = [];
+
+// ── 簇内打散：同艺人簇内，同专辑的卡轮流交错，避免相邻同封面 ──
+const declusterOrder = {};   // artist -> 该艺人卡片的打散后顺序（原 TRACKS index 数组）
+Object.entries(ARTISTS).forEach(([ar, indices]) => {
+  const buckets = {};
+  indices.forEach(idx => { const k = TRACKS[idx].alName; (buckets[k] = buckets[k] || []).push(idx); });
+  const keys = Object.keys(buckets);
+  const out = [];
+  while (out.length < indices.length) {
+    for (const k of keys) { if (buckets[k].length) out.push(buckets[k].shift()); }
+  }
+  declusterOrder[ar] = out;
+});
+
+const loader = new THREE.TextureLoader();
+loader.crossOrigin = 'anonymous';
+let loadedCount = 0;
+
+function onProgress() {
+  loadedCount++;
+  const pct = loadedCount / TRACKS.length;
+  document.getElementById('ld-fill').style.width = (pct * 100) + '%';
+  document.getElementById('ld-label').textContent = `加载封面中… ${loadedCount} / ${TRACKS.length}`;
+  if (loadedCount >= TRACKS.length) {
+    const el = document.getElementById('loading');
+    el.style.opacity = '0';
+    setTimeout(() => el.style.display = 'none', 900);
+  }
+}
+
+TRACKS.forEach((track, i) => {
+  const ar = track.ar[0];
+  const arIdx = Object.keys(ARTISTS).indexOf(ar);
+  const ctr = clusterOf(ar, arIdx);
+
+  // Depth-based scale: near=large, far=small
+  const df = Math.max(0, Math.min(1, (ctr.z - Z_FAR_REF) / (Z_NEAR_REF - Z_FAR_REF)));
+  const depthScale = 0.35 + df * 2.4;        // 0.35 at far → 2.75 at near
+  const sizeJitter = 0.75 + seededRnd(i*7+6) * 0.5;  // 0.75–1.25 per-card variation
+  const scale = depthScale * sizeJitter;
+
+  // Scatter within cluster
+  // 簇内环形分布：同簇卡片按序排到不重叠的角度+半径，按缩放留间距
+  const sameCluster = declusterOrder[ar] || [i];
+  const localIdx = sameCluster.indexOf(i);
+  const ringStep = 2.39996;                       // 黄金角，避免对齐
+  const ang = localIdx * ringStep;
+  const radius = (BASE_CARD * scale * 0.9) * (1.1 + localIdx * 0.7);
+  const jx = Math.cos(ang) * radius;
+  const jy = Math.sin(ang) * radius * 0.55 + (seededRnd(i*7+1) - 0.5) * 1.2;
+  const jz = Math.sin(ang * 1.7) * radius * 0.4;
+
+  // Card rotations — vertical, personality tilts
+  const rx = (seededRnd(i*7+3) - 0.5) * 0.30;
+  const ry = (seededRnd(i*7+4) - 0.5) * 0.44;
+  const rz = (seededRnd(i*7+5) - 0.5) * 0.22;
+
+  const geo = new THREE.PlaneGeometry(BASE_CARD, BASE_CARD);
+  const mat = new THREE.MeshBasicMaterial({ color: phColor(track.name), side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+
+  mesh.rotation.set(rx, ry, rz);       // VERTICAL cards, no -PI/2 floor rotation
+  mesh.position.set(ctr.x+jx, ctr.y+jy, ctr.z+jz);
+  mesh.scale.setScalar(scale);
+  mesh.userData.track = track;
+
+  scene.add(mesh);
+  meshes.push(mesh);
+
+  loader.load(track.alPicUrl,
+    (tex) => {
+      mesh.material.dispose();
+      mesh.material = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+      onProgress();
+    },
+    undefined,
+    () => onProgress()
+  );
+});
+
+// ═══════════════════════════════════════════════════════════
+// CONSTELLATION LINES  (same-artist clusters)
+// ═══════════════════════════════════════════════════════════
+{
+  const pts = [];
+  Object.values(ARTISTS).forEach(indices => {
+    if (indices.length < 2) return;
+    for (let i = 0; i < indices.length - 1; i++) {
+      pts.push(meshes[indices[i]].position, meshes[indices[i+1]].position);
+    }
+    if (indices.length >= 3) {
+      pts.push(meshes[indices[indices.length-1]].position, meshes[indices[0]].position);
+    }
+  });
+  const lg = new THREE.BufferGeometry().setFromPoints(pts);
+  const lm = new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.09, transparent: true });
+  scene.add(new THREE.LineSegments(lg, lm));
+}
+
+// ═══════════════════════════════════════════════════════════
+// ARTIST LABELS
+// ═══════════════════════════════════════════════════════════
+const labelEls = {};
+const labelCont = document.getElementById('artist-labels');
+Object.entries(CLUSTER).forEach(([name]) => {
+  const count = ARTISTS[name] ? ARTISTS[name].length : 1;
+  const el = document.createElement('div');
+  el.className = 'al';
+  el.innerHTML = `<div class="al-dot"></div><div class="al-name">${name}</div><div class="al-count">${count} TRACK${count>1?'S':''} ›</div>`;
+  labelCont.appendChild(el);
+  labelEls[name] = el;
+});
+
+const _lv = new THREE.Vector3();
+function updateLabels() {
+  const W2 = window.innerWidth, H2 = window.innerHeight;
+  Object.entries(CLUSTER).forEach(([name, ctr]) => {
+    const el = labelEls[name]; if (!el) return;
+    _lv.set(ctr.x, ctr.y + 6, ctr.z);
+    _lv.project(camera);
+    if (_lv.z > 1) { el.style.opacity = '0'; return; }
+    el.style.left = ((_lv.x*.5+.5)*W2) + 'px';
+    el.style.top  = ((-_lv.y*.5+.5)*H2) + 'px';
+    const dist = Math.sqrt((ctr.x-camX)**2+(ctr.y-camY)**2+(ctr.z-camZ)**2);
+    el.style.opacity = Math.max(0, Math.min(.85, 1.1 - dist/65));
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// CAMERA CONTROL
+// ═══════════════════════════════════════════════════════════
+let camX = 0, camY = 8, camZ = 5;
+let velX = 0, velY = 0;
+let dragging = false, lastMX = 0, lastMY = 0;
+let flyTarget = null;
+
+function applyCamera() {
+  camera.position.set(camX, camY, camZ);
+  camera.lookAt(camX, camY - 10, camZ - 28);
+}
+applyCamera();
+
+document.addEventListener('mousedown', e => {
+  if (e.target.closest('#focus-card') || e.target.closest('#toolbar')) return;
+  dragging = true; velX = velY = 0;
+  lastMX = e.clientX; lastMY = e.clientY;
+  document.body.classList.add('drag');
+});
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX-lastMX, dy = e.clientY-lastMY;
+  camX -= dx*.04; camY += dy*.03;
+  velX = -dx*.04; velY = dy*.03;
+  lastMX = e.clientX; lastMY = e.clientY;
+});
+document.addEventListener('mouseup', () => { dragging = false; document.body.classList.remove('drag'); });
+document.addEventListener('touchstart', e => {
+  dragging = true; velX = velY = 0;
+  lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!dragging) return;
+  const dx = e.touches[0].clientX-lastMX, dy = e.touches[0].clientY-lastMY;
+  camX -= dx*.04; camY += dy*.03; velX = -dx*.04; velY = dy*.03;
+  lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
+}, { passive: true });
+document.addEventListener('touchend', () => { dragging = false; });
+document.addEventListener('wheel', e => {
+  e.preventDefault();
+  camZ -= e.deltaY * .055;
+  // 软边界：不硬截断，越界后由 animate() 橡皮筋拉回
+}, { passive: false });
+
+// ═══════════════════════════════════════════════════════════
+// DEPTH BRIGHTNESS  (fake DOF layer — distance darkening)
+// Works alongside BokehPass: far cards are dark + blurry.
+// ═══════════════════════════════════════════════════════════
+function updateDepth() {
+  const cx = camX, cy = camY, cz = camZ;
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    const d = Math.sqrt((m.position.x-cx)**2+(m.position.y-cy)**2+(m.position.z-cz)**2);
+    m.material.color.setScalar(Math.max(0.07, 1.0 - d/80));
+  }
+}
+
+// ── 每张卡的固定个性偏转（一次性生成，不随帧变，避免抖动）──
+const cardTilt = meshes.map((_, i) => ({
+  rx: (seededRnd(i*7+3) - 0.5) * 0.50,
+  ry: (seededRnd(i*7+4) - 0.5) * 0.70,
+  rz: (seededRnd(i*7+5) - 0.5) * 0.34,
+}));
+
+// ── #11 呼吸感：记录每张卡基准位置 + 随机相位/速度，animate 里叠加极轻浮动 ──
+const cardBase = meshes.map(m => m.position.clone());
+const cardBreath = meshes.map((_, i) => ({
+  phase: seededRnd(i*13+2) * Math.PI * 2,
+  speed: 0.35 + seededRnd(i*13+5) * 0.4,        // 慢，呼吸节奏
+  ampX:  0.10 + seededRnd(i*13+7) * 0.18,
+  ampY:  0.14 + seededRnd(i*13+9) * 0.22,
+  ampS:  0.010 + seededRnd(i*13+11) * 0.015,    // 极轻缩放呼吸
+}));
+function updateBreath(t) {
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    if (m === focusedMesh) continue;             // 聚焦卡不漂
+    const b = cardBreath[i], base = cardBase[i];
+    const ph = t * b.speed + b.phase;
+    m.position.x = base.x + Math.sin(ph) * b.ampX;
+    m.position.y = base.y + Math.cos(ph * 0.9) * b.ampY;
+  }
+}
+
+// ── billboard 基准朝向 + 叠加固定偏转 ──
+function updateBillboard() {
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    m.lookAt(camera.position);
+    if (m === focusedMesh) continue;     // 聚焦卡：只正对相机，不加个性偏转
+    m.rotateX(cardTilt[i].rx);
+    m.rotateY(cardTilt[i].ry);
+    m.rotateZ(cardTilt[i].rz);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// STATE  (browse ↔ focus)
+// ═══════════════════════════════════════════════════════════
+let focusMode = false;
+let focusedMesh = null;
+const focusCard  = document.getElementById('focus-card');
+const fcImg      = document.getElementById('fc-img');
+const fcTitle    = document.getElementById('fc-title');
+const fcArtist   = document.getElementById('fc-artist');
+const fcYear     = document.getElementById('fc-year');
+const fcEmbed    = document.getElementById('fc-embed');
+const toolbar    = document.getElementById('toolbar');
+const crosshair  = document.getElementById('crosshair');
+
+// ── Player state ──
+const playerBar   = document.getElementById('player-bar');
+const pbThumb     = document.getElementById('pb-thumb');
+const pbTitle     = document.getElementById('pb-title');
+const pbArtist    = document.getElementById('pb-artist');
+const pbPlay      = document.getElementById('pb-play');
+const pbPrev      = document.getElementById('pb-prev');
+const pbNext      = document.getElementById('pb-next');
+
+let currentTrackIdx = -1;
+let isPlaying = false;
+
+const pbProgressFill = document.getElementById('pb-progress-fill');
+const pbCur = document.getElementById('pb-cur');
+const pbDur = document.getElementById('pb-dur');
+let progressTimer = null;
+let playElapsed = 0;          // 本地计时（秒）— 近似，暂停/拖动会漂移
+let curDuration = 240;        // 当前曲时长（秒），有 DURATIONS 用真值否则回退
+const DEFAULT_DURATION = 240;
+
+function fmtTime(s) {
+  s = Math.max(0, Math.floor(s));
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return `${m}:${ss}`;
+}
+
+function startProgress() {
+  if (progressTimer) clearInterval(progressTimer);
+  playElapsed = 0;
+  pbProgressFill.style.width = '0%';
+  pbCur.textContent = '0:00';
+  pbDur.textContent = fmtTime(curDuration);
+  progressTimer = setInterval(() => {
+    playElapsed++;
+    const pct = Math.min(100, (playElapsed / curDuration) * 100);
+    pbProgressFill.style.width = pct + '%';
+    pbCur.textContent = fmtTime(playElapsed);
+    syncLyrics(playElapsed);
+    if (playElapsed >= curDuration) clearInterval(progressTimer);
+  }, 1000);
+}
+
+function stopProgress() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+  pbProgressFill.style.width = '0%';
+  pbCur.textContent = '0:00';
+}
+
+function updateScrollTitle(text) {
+  pbTitle.classList.remove('scrolling');
+  pbTitle.textContent = text;
+  pbTitle.style.removeProperty('--scroll-dist');
+  // 下一帧测量是否溢出
+  requestAnimationFrame(() => {
+    const overflow = pbTitle.scrollWidth - pbTitle.clientWidth;
+    if (overflow > 4) {
+      pbTitle.style.setProperty('--scroll-dist', `-${overflow + 8}px`);
+      pbTitle.classList.add('scrolling');
+    }
+  });
+}
+
+// ── #9 歌词：解析 lrc、渲染、按时间轴高亮 ──
+const lyricsPanel = document.getElementById('lyrics-panel');
+const lpScroll    = document.getElementById('lp-scroll');
+let lyricsOn = false;          // 用户是否开启歌词显示
+let parsedLyrics = [];         // [{t: 秒, text}]
+let lyricActiveIdx = -1;
+
+function parseLrc(lrc) {
+  const out = [];
+  if (!lrc) return out;
+  lrc.split('\n').forEach(line => {
+    const m = line.match(/^\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\](.*)$/);
+    if (!m) return;
+    const t = parseInt(m[1]) * 60 + parseInt(m[2]) + (m[3] ? parseInt(m[3].padEnd(3,'0')) / 1000 : 0);
+    const text = m[4].trim();
+    out.push({ t, text });
+  });
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+
+function loadLyrics(track) {
+  parsedLyrics = parseLrc(LYRICS[track.id]);
+  lyricActiveIdx = -1;
+  lpScroll.innerHTML = '';
+  if (!parsedLyrics.length) {
+    lpScroll.innerHTML = '<div id="lp-empty">暂无歌词</div>';
+    return;
+  }
+  parsedLyrics.forEach((ln, i) => {
+    const d = document.createElement('div');
+    d.className = 'lp-line';
+    d.dataset.i = i;
+    d.textContent = ln.text || '· · ·';
+    lpScroll.appendChild(d);
+  });
+  lpScroll.style.transform = 'translateY(0)';
+}
+
+function syncLyrics(sec) {
+  if (!lyricsOn || !parsedLyrics.length) return;
+  let idx = -1;
+  for (let i = 0; i < parsedLyrics.length; i++) {
+    if (parsedLyrics[i].t <= sec) idx = i; else break;
+  }
+  if (idx === lyricActiveIdx) return;
+  lyricActiveIdx = idx;
+  const lines = lpScroll.children;
+  for (let i = 0; i < lines.length; i++) lines[i].classList.toggle('active', i === idx);
+  // 让当前行居中：按行高估算偏移
+  if (idx >= 0 && lines[idx]) {
+    const lineH = lines[idx].offsetTop;
+    lpScroll.style.transform = `translateY(${ -lineH + 110 }px)`;
+  }
+}
+
+function applyLyricsVisibility() {
+  // 只有在 focus 且用户开启时才显示
+  if (lyricsOn && focusMode) lyricsPanel.classList.add('on');
+  else lyricsPanel.classList.remove('on');
+}
+
+
+function loadTrack(idx, autoplay) {
+  if (idx < 0 || idx >= TRACKS.length) return;
+  currentTrackIdx = idx;
+  const track = TRACKS[idx];
+  curDuration = DURATIONS[track.id] || DEFAULT_DURATION;   // #8 真实时长 or 回退
+  loadLyrics(track);                                        // #9 装载歌词
+  pbDur.textContent = fmtTime(curDuration);
+  // 更新 focus card（切歌时也唤出大卡，新歌专辑卡始终显示）
+  fcImg.src            = track.alPicUrl;
+  fcTitle.textContent  = track.name;
+  fcArtist.textContent = track.ar.join(' / ');
+  fcYear.textContent   = track.alName;
+  focusMode = true;
+  focusCard.classList.add('on');
+  toolbar.classList.add('hidden');
+  crosshair.classList.add('hidden');
+  applyLyricsVisibility();
+  // 同步更新 focusedMesh
+  const mesh = meshes.find(m => m.userData.track && m.userData.track.id === track.id);
+  if (mesh) focusedMesh = mesh;
+  // 更新 player bar
+  pbThumb.src          = track.alPicUrl;
+  updateScrollTitle(track.name);
+  pbArtist.textContent = track.ar.join(' / ');
+  playerBar.classList.add('on');
+  renderPlaylist();      // 高亮当前曲
+  isPlaying = false;
+  pbPlay.innerHTML = '&#9654;';
+  stopProgress();
+}
+
+function enterFocus(track) {
+  focusMode = true;
+  const idx = TRACKS.findIndex(t => t.id === track.id);
+  loadTrack(idx, true);
+  focusCard.classList.add('on');
+  toolbar.classList.add('hidden');
+  crosshair.classList.add('hidden');
+  applyLyricsVisibility();
+  // 会员歌：自动弹 pop-up（fee 在数据层已知，无需检测播放）
+  if (isVip(track)) {
+    showVipPop();
+  } else {
+    hideVipPop();
+    playCurrent();   // #6 点卡即播（仍在用户手势栈内，稳定出声）
+  }
+}
+
+// ── 会员歌判定与处理 ──
+function isVip(track) { return track && (track.fee === 1 || track.fee === 4); }
+
+// 从 idx 之后找下一首非会员歌（循环到末尾，找不到返回 -1）
+function nextFreeIdx(fromIdx) {
+  for (let step = 1; step <= TRACKS.length; step++) {
+    const j = (fromIdx + step) % TRACKS.length;
+    if (!isVip(TRACKS[j])) return j;
+  }
+  return -1;
+}
+
+function showVipPop() {
+  document.getElementById('vip-pop').classList.add('on');
+  setPlayingUI(false);
+  stopProgress();
+}
+function hideVipPop() {
+  document.getElementById('vip-pop').classList.remove('on');
+}
+
+function exitFocus() {
+  focusMode = false;
+  focusedMesh = null;
+  focusCard.classList.remove('on');
+  toolbar.classList.remove('hidden');
+  crosshair.classList.remove('hidden');
+  lyricsPanel.classList.remove('on');
+  hideVipPop();
+  // player bar 保留，embed 继续发声
+}
+
+// 这三个按钮(尤其 vip-login/vip-skip)的 HTML 在脚本标签之后,
+// 脚本执行时尚未解析,故延迟到 window load(全部 DOM 就绪)后再绑定。
+window.addEventListener('load', () => {
+  document.getElementById('fc-close')?.addEventListener('click', exitFocus);
+  // vip pop-up 按钮
+  document.getElementById('vip-login')?.addEventListener('click', () => {
+    // 跳转网易云登录（新标签页），用户登录后回到本站再点播放即可继承登录态
+    window.open('https://music.163.com/#/login', '_blank');
+  });
+  document.getElementById('vip-skip')?.addEventListener('click', () => {
+    hideVipPop();
+    const j = nextFreeIdx(currentTrackIdx);
+    if (j >= 0) {
+      const t = TRACKS[j];
+      const mesh = meshes.find(m => m.userData.track && m.userData.track.id === t.id);
+      if (mesh) focusedMesh = mesh;
+      enterFocus(t);
+    }
+  });
+});
+
+// 播放/暂停 UI 状态集中处理（含 #3 左下角图标转动）
+const uAv = document.getElementById('u-av');
+function setPlayingUI(on) {
+  isPlaying = on;
+  pbPlay.innerHTML = on ? '&#9646;&#9646;' : '&#9654;';
+  if (on) uAv.classList.add('spinning'); else uAv.classList.remove('spinning');
+}
+
+// player bar 控制
+pbPlay.addEventListener('click', () => {
+  if (currentTrackIdx < 0) return;
+  const track = TRACKS[currentTrackIdx];
+  if (isPlaying) {
+    // 暂停：清空 src 停声
+    fcEmbed.src = '';
+    setPlayingUI(false);
+    stopProgress();
+  } else {
+    if (isVip(track)) { showVipPop(); return; }
+    playCurrent();
+  }
+});
+
+pbPrev.addEventListener('click', () => {
+  const j = prevIdx(currentTrackIdx);
+  if (j < 0) return;
+  loadTrack(j, true);
+  if (!isVip(TRACKS[j])) playCurrent();
+  else showVipPop();
+});
+
+pbNext.addEventListener('click', () => {
+  const j = nextIdx(currentTrackIdx);
+  if (j < 0) return;
+  loadTrack(j, true);
+  if (!isVip(TRACKS[j])) playCurrent();
+  else showVipPop();
+});
+
+// 用当前曲目加载播放器并出声（仅在用户手势栈内调用）
+function playCurrent() {
+  if (currentTrackIdx < 0) return;
+  const track = TRACKS[currentTrackIdx];
+  if (isVip(track)) { showVipPop(); return; }
+  fcEmbed.src = `https://music.163.com/outchain/player?type=2&id=${track.id}&auto=1&height=66&_t=${Date.now()}`;
+  setPlayingUI(true);
+  startProgress();
+}
+
+// 上一首/下一首：受循环模式影响（loopMode: 'list' | 'one' | 'off'；shuffle 独立）
+let shuffleOn = false;
+let loopMode = 'list';   // list=列表循环, one=单曲循环, off=播完即止
+function nextIdx(from) {
+  if (from < 0) return 0;
+  if (shuffleOn) { let r; do { r = Math.floor(Math.random()*TRACKS.length); } while (TRACKS.length>1 && r===from); return r; }
+  if (loopMode === 'one') return from;
+  if (from < TRACKS.length - 1) return from + 1;
+  return loopMode === 'list' ? 0 : -1;
+}
+function prevIdx(from) {
+  if (from < 0) return 0;
+  if (shuffleOn) { let r; do { r = Math.floor(Math.random()*TRACKS.length); } while (TRACKS.length>1 && r===from); return r; }
+  if (from > 0) return from - 1;
+  return loopMode === 'list' ? TRACKS.length - 1 : -1;
+}
+
+// ═══════════════════════════════════════════════════════════
+// UI WIRING  (#2 toolbar, #4 playlist, #9 lyrics toggle)
+// 这些元素都在主脚本标签之前，可在顶层直接绑定。
+// ═══════════════════════════════════════════════════════════
+function recenter() {
+  flyTarget = { x: 0, y: 8, z: 5 };
+}
+// #2 工具条
+document.getElementById('tb-shuffle')?.addEventListener('click', (e) => {
+  shuffleOn = !shuffleOn;
+  e.currentTarget.classList.toggle('active', shuffleOn);
+  e.currentTarget.title = shuffleOn ? '随机播放：开' : '随机播放：关';
+});
+document.getElementById('tb-loop')?.addEventListener('click', (e) => {
+  loopMode = loopMode === 'list' ? 'one' : loopMode === 'one' ? 'off' : 'list';
+  e.currentTarget.classList.toggle('active', loopMode !== 'off');
+  e.currentTarget.title = loopMode === 'list' ? '循环：列表' : loopMode === 'one' ? '循环：单曲' : '循环：关';
+  e.currentTarget.textContent = loopMode === 'one' ? '①' : '◎';
+});
+document.getElementById('tb-center')?.addEventListener('click', recenter);
+
+// 音量：网易云 embed 跨域不可控音量，这里用 iframe 透明度无意义——
+// 退而用本地静音兜底（embed 自身音量条仍可用）。先保留滑块，绑一个本地占位。
+document.getElementById('vol-slider')?.addEventListener('input', () => { /* embed 跨域，音量由其自带控件控制 */ });
+
+// #9 歌词开关
+document.getElementById('fc-lyrics-toggle')?.addEventListener('click', () => {
+  lyricsOn = !lyricsOn;
+  const btn = document.getElementById('fc-lyrics-toggle');
+  btn.style.background = lyricsOn ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.5)';
+  applyLyricsVisibility();
+});
+
+// #4 歌单面板
+const playlistPanel = document.getElementById('playlist-panel');
+const ppList = document.getElementById('pp-list');
+function renderPlaylist() {
+  if (!ppList) return;
+  if (ppList.childElementCount === TRACKS.length) {
+    // 已渲染，只更新高亮
+    [...ppList.children].forEach((row, i) => row.classList.toggle('playing', i === currentTrackIdx));
+    const cur = ppList.children[currentTrackIdx];
+    if (cur && playlistPanel.classList.contains('on')) cur.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  ppList.innerHTML = '';
+  TRACKS.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'pp-row' + (i === currentTrackIdx ? ' playing' : '');
+    row.innerHTML =
+      `<span class="pp-idx">${i+1}</span>` +
+      `<div class="pp-meta"><div class="pp-name">${t.name}</div><div class="pp-ar">${t.ar.join(' / ')}</div></div>` +
+      (isVip(t) ? `<span class="pp-vip">VIP</span>` : '');
+    row.addEventListener('click', () => {
+      const mesh = meshes.find(m => m.userData.track && m.userData.track.id === t.id);
+      if (mesh) {
+        focusedMesh = mesh;
+        const p = mesh.position;
+        flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
+      }
+      enterFocus(t);   // 点列表项即定位 + 播放（用户手势栈内）
+    });
+    ppList.appendChild(row);
+  });
+}
+function togglePlaylist(force) {
+  const on = force !== undefined ? force : !playlistPanel.classList.contains('on');
+  playlistPanel.classList.toggle('on', on);
+  if (on) renderPlaylist();
+}
+document.getElementById('hud-user')?.addEventListener('click', () => togglePlaylist());
+document.getElementById('pp-close')?.addEventListener('click', () => togglePlaylist(false));
+
+
+let mdX = 0, mdY = 0;
+
+document.addEventListener('mousedown', e => { mdX = e.clientX; mdY = e.clientY; });
+document.addEventListener('mouseup', e => {
+  if (e.target.closest('#focus-card') || e.target.closest('#toolbar') || e.target.closest('#player-bar') || e.target.closest('#playlist-panel') || e.target.closest('#hud-user') || e.target.closest('#lyrics-panel') || e.target.closest('#vip-pop')) return;
+  if (Math.hypot(e.clientX-mdX, e.clientY-mdY) > 6) return;
+  pointer.x =  (e.clientX/window.innerWidth)*2 - 1;
+  pointer.y = -(e.clientY/window.innerHeight)*2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(meshes, false);
+  if (hits.length) {
+    focusedMesh = hits[0].object;
+    enterFocus(hits[0].object.userData.track);
+  } else if (focusMode) {
+    exitFocus();
+  }
+});
+
+// Double-click: fly toward card
+document.addEventListener('dblclick', e => {
+  if (e.target.closest('#focus-card')) return;
+  pointer.x =  (e.clientX/window.innerWidth)*2 - 1;
+  pointer.y = -(e.clientY/window.innerHeight)*2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(meshes, false);
+  if (hits.length) {
+    const p = hits[0].object.position;
+    const STEP = 22;
+    const targetZ = Math.max(p.z + 9, camZ - STEP);
+    flyTarget = {
+      x: camX + (p.x - camX) * 0.5,
+      y: camY + (p.y - camY) * 0.5,
+      z: targetZ
+    };
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════
+function animate() {
+  requestAnimationFrame(animate);
+  const _t = performance.now() * 0.001;
+  updateBreath(_t);   // #11 卡片呼吸（focus 卡已排除）
+
+  // Camera fly-to
+  if (flyTarget) {
+    camX += (flyTarget.x - camX) * .12;
+    camY += (flyTarget.y - camY) * .12;
+    camZ += (flyTarget.z - camZ) * .12;
+    if (Math.abs(flyTarget.z - camZ) < .05) flyTarget = null;
+  } else if (!dragging) {
+    camX += velX; camY += velY;
+    velX *= .88; velY *= .88;
+    if (Math.abs(velX) < .001) velX = 0;
+    if (Math.abs(velY) < .001) velY = 0;
+  }
+
+  // ── 软边界宇宙：越界橡皮筋回弹，永不黑边、永不过近变糊 ──
+  const Z_MIN = -68, Z_MAX = 14;     // 近/远边界（防糊近界 + 防空旷远界）
+  const X_LIM = 40, Y_LIM = 22;      // 拖拽边界
+  const PULL = 0.08;                 // 回弹力度
+  if (camZ < Z_MIN) camZ += (Z_MIN - camZ) * PULL;
+  if (camZ > Z_MAX) camZ += (Z_MAX - camZ) * PULL;
+  if (camX < -X_LIM) camX += (-X_LIM - camX) * PULL;
+  if (camX >  X_LIM) camX += ( X_LIM - camX) * PULL;
+  if (camY < -Y_LIM) camY += (-Y_LIM - camY) * PULL;
+  if (camY >  Y_LIM) camY += ( Y_LIM - camY) * PULL;
+
+  applyCamera();
+  updateDepth();
+  updateBillboard();
+  updateLabels();
+
+  // Render: DOF composer or plain fallback
+  renderer.clear();
+  if (USE_DOF) {
+    composer.render();
+  } else {
+    // ── 星空闪烁（辉光 sprite + 整体明暗呼吸 + 局部抖动）#10 ──
+    const st = performance.now() * 0.001;
+    starMat.opacity = 0.70 + 0.25 * Math.sin(st * 1.2);
+    starMat.size = 1.05 + 0.18 * Math.sin(st * 2.3);
+    const starPosArr = starGeo.attributes.position.array;
+    const slice = Math.floor(STAR_N / 8);
+    const base = Math.floor(st * 30) % 8 * slice;
+    for (let i = base; i < base + slice && i < STAR_N; i++) {
+      starPosArr[i*3+1] += (Math.random() - 0.5) * 0.004;
+    }
+    starGeo.attributes.position.needsUpdate = true;
+
+    // ── 流星（亮拖尾 + 发光头）#10 ──
+    for (const mt of meteors) {
+      if (!mt.active) {
+        mt.nextAt -= 0.016;
+        if (mt.nextAt <= 0) { mt.reset(); mt.nextAt = 3 + Math.random() * 6; }
+        continue;
+      }
+      mt.t += 0.016 / mt.duration;
+      if (mt.t >= 1) { mt.active = false; mt.mesh.material.opacity = 0; mt.head.material.opacity = 0; continue; }
+      const head = mt.t;
+      const tail = Math.max(0, mt.t - mt.len);
+      const pts = mt.mesh.geometry.attributes.position.array;
+      const hx = mt.ox + mt.dx * head, hy = mt.oy + mt.dy * head, hz = mt.oz + mt.dz * head;
+      pts[0] = hx; pts[1] = hy; pts[2] = hz;
+      pts[3] = mt.ox + mt.dx * tail; pts[4] = mt.oy + mt.dy * tail; pts[5] = mt.oz + mt.dz * tail;
+      mt.mesh.geometry.attributes.position.needsUpdate = true;
+      const fade = mt.t < 0.1 ? mt.t / 0.1 : mt.t > 0.8 ? (1 - mt.t) / 0.2 : 1;
+      mt.mesh.material.opacity = 1.0 * fade;
+      mt.head.position.set(hx, hy, hz);
+      mt.head.material.opacity = 0.95 * fade;
+    }
+
+    renderer.render(scene, camera);
+  }
+}
+animate();
+
+// ═══════════════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+  const W2 = window.innerWidth, H2 = window.innerHeight;
+  camera.aspect = W2 / H2;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W2, H2);
+  composer.setSize(W2, H2);
+});
+</script>
+<!-- 会员歌 pop-up -->
+<div id="vip-pop">
+  <div id="vip-box">
+    <div id="vip-title">这是一首会员歌曲</div>
+    <p id="vip-desc">该曲目需登录网易云会员才能完整收听。你可以登录后回来播放，或跳到下一首可免费收听的歌。</p>
+    <div id="vip-btns">
+      <button id="vip-login">去网易云登录</button>
+      <button id="vip-skip">跳到下一首可听的</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
