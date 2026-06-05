@@ -8,6 +8,8 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #050508; cursor: grab; }
   body.drag { cursor: grabbing; }
+  body.hover-card { cursor: pointer; }
+  body.hover-card.drag { cursor: grabbing; }
   #c { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
 
   /* ── HUD top-left ── */
@@ -799,12 +801,26 @@ function onProgress() {
   const pct = loadedCount / TRACKS.length;
   document.getElementById('ld-fill').style.width = (pct * 100) + '%';
   document.getElementById('ld-label').textContent = `加载封面中… ${loadedCount} / ${TRACKS.length}`;
-  if (loadedCount >= TRACKS.length) {
-    const el = document.getElementById('loading');
-    el.style.opacity = '0';
-    setTimeout(() => el.style.display = 'none', 900);
-  }
+  if (loadedCount >= TRACKS.length) hideLoading();
 }
+
+// 收起 loading 浮层。必须 pointer-events:none + display:none，
+// 否则浮层（z-index:500, inset:0）残留会吃掉所有画布点击 → 卡片选不中。
+let _loadingHidden = false;
+function hideLoading() {
+  if (_loadingHidden) return;
+  _loadingHidden = true;
+  const el = document.getElementById('loading');
+  if (!el) return;
+  el.style.opacity = '0';
+  el.style.pointerEvents = 'none';
+  setTimeout(() => { el.style.display = 'none'; }, 900);
+  // #2 新用户引导：首屏自动展开歌单，让用户看到入口；选歌或关闭后即收起，不再自动弹
+  setTimeout(() => { if (typeof togglePlaylist === 'function') togglePlaylist(true); }, 1100);
+}
+// 兜底：即便有封面 403/卡死导致计数到不了 78，最多 8 秒后也强制收起，
+// 保证浮层永不挡住交互（网易云防盗链在正式域名下偶发卡 onload）。
+setTimeout(hideLoading, 8000);
 
 TRACKS.forEach((track, i) => {
   const ar = track.ar[0];
@@ -840,6 +856,7 @@ TRACKS.forEach((track, i) => {
   mesh.rotation.set(rx, ry, rz);       // VERTICAL cards, no -PI/2 floor rotation
   mesh.position.set(ctr.x+jx, ctr.y+jy, ctr.z+jz);
   mesh.scale.setScalar(scale);
+  mesh.userData.baseScale = scale;   // 供 hover/选中动画用
   mesh.userData.track = track;
 
   scene.add(mesh);
@@ -1174,6 +1191,7 @@ function loadTrack(idx, autoplay) {
 
 function enterFocus(track) {
   focusMode = true;
+  togglePlaylist(false);   // #2 选歌后自动收起歌单
   const idx = TRACKS.findIndex(t => t.id === track.id);
   loadTrack(idx, true);
   focusCard.classList.add('on');
@@ -1382,8 +1400,12 @@ document.getElementById('hud-user')?.addEventListener('click', () => togglePlayl
 document.getElementById('pp-close')?.addEventListener('click', () => togglePlaylist(false));
 
 
+// ═══════════════════════════════════════════════════════════
+// RAYCASTER  (selection + hover)
+// ═══════════════════════════════════════════════════════════
+const raycaster = new THREE.Raycaster();
+const pointer   = new THREE.Vector2();
 let mdX = 0, mdY = 0;
-
 document.addEventListener('mousedown', e => { mdX = e.clientX; mdY = e.clientY; });
 document.addEventListener('mouseup', e => {
   if (e.target.closest('#focus-card') || e.target.closest('#toolbar') || e.target.closest('#player-bar') || e.target.closest('#playlist-panel') || e.target.closest('#hud-user') || e.target.closest('#lyrics-panel') || e.target.closest('#vip-pop')) return;
@@ -1394,11 +1416,48 @@ document.addEventListener('mouseup', e => {
   const hits = raycaster.intersectObjects(meshes, false);
   if (hits.length) {
     focusedMesh = hits[0].object;
+    triggerPunch(hits[0].object);   // 选中"按一下"反馈
     enterFocus(hits[0].object.userData.track);
   } else if (focusMode) {
     exitFocus();
   }
 });
+
+// ── 悬停反馈：光标变 pointer + 卡片轻微放大；选中时"按一下"动画 ──
+let hoveredMesh = null;
+let punchMesh = null, punchT = 0;
+function triggerPunch(mesh) { punchMesh = mesh; punchT = 0; }
+
+let _hoverMX = -1, _hoverMY = -1;
+document.addEventListener('mousemove', e => {
+  _hoverMX = e.clientX; _hoverMY = e.clientY;
+});
+function updateHover() {
+  if (_hoverMX < 0 || dragging) { return; }
+  pointer.x =  (_hoverMX/window.innerWidth)*2 - 1;
+  pointer.y = -(_hoverMY/window.innerHeight)*2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(meshes, false);
+  const hit = hits.length ? hits[0].object : null;
+  hoveredMesh = hit;
+  document.body.classList.toggle('hover-card', !!hit);
+}
+function updateCardFX() {
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    if (m === focusedMesh) continue;
+    let target = m.userData.baseScale;
+    if (m === hoveredMesh) target *= 1.08;           // 悬停放大
+    // 选中"按一下"：先弹大再回落
+    if (m === punchMesh) {
+      const k = Math.sin(Math.min(1, punchT) * Math.PI);  // 0→1→0
+      target *= (1 + 0.22 * k);
+    }
+    const cur = m.scale.x;
+    m.scale.setScalar(cur + (target - cur) * 0.25);   // 平滑过渡
+  }
+  if (punchMesh) { punchT += 0.06; if (punchT >= 1) punchMesh = null; }
+}
 
 // Double-click: fly toward card
 document.addEventListener('dblclick', e => {
@@ -1426,6 +1485,8 @@ function animate() {
   requestAnimationFrame(animate);
   const _t = performance.now() * 0.001;
   updateBreath(_t);   // #11 卡片呼吸（focus 卡已排除）
+  updateHover();      // 悬停检测（光标 + 放大目标）
+  updateCardFX();     // 平滑应用 hover / 选中动画
 
   // Camera fly-to
   if (flyTarget) {
