@@ -263,10 +263,8 @@
     background: rgba(10,10,16,0.85); padding: 4px 12px; border-radius: 12px;
     border: 1px solid rgba(255,255,255,0.08);
     pointer-events: none;
-    transition: color .3s, border-color .3s;
     font-family: -apple-system, sans-serif;
   }
-  #pb-hint.flash { color: rgba(255,255,255,0.85); border-color: rgba(255,255,255,0.25); }
 
 
   /* ── Expandable playlist panel (#4) ── */
@@ -387,6 +385,33 @@
   #lp-empty { font-size: 12px; color: rgba(255,255,255,0.4); text-align: center; padding: 20px 0;
     text-shadow: 0 1px 8px rgba(0,0,0,0.6); }
   /* lyrics toggle button inside focus card */
+  /* ── 会员/付费歌拦截弹窗 ── */
+  #vip-pop {
+    position: fixed; inset: 0; z-index: 210;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(3,3,8,0.6); backdrop-filter: blur(4px);
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+  }
+  #vip-pop.on { display: flex; }
+  #vip-box {
+    width: 340px; max-width: calc(100vw - 40px);
+    background: rgba(16,16,24,0.96);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 16px; padding: 22px 22px 18px;
+    text-align: center;
+  }
+  #vip-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+  #vip-desc { font-size: 13px; line-height: 1.6; color: rgba(255,255,255,0.65); margin-bottom: 18px; }
+  #vip-btns { display: flex; flex-direction: column; gap: 9px; }
+  #vip-btns button {
+    width: 100%; padding: 11px; border-radius: 10px; font-size: 14px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.2); transition: background .15s;
+  }
+  #vip-login { background: rgba(220,60,70,0.85); color: #fff; border-color: rgba(220,60,70,0.5); }
+  #vip-login:hover { background: rgba(230,70,80,1); }
+  #vip-skip { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+  #vip-skip:hover { background: rgba(255,255,255,0.2); }
+
   /* 歌词面板关闭按钮（独立于卡片） */
   #lp-close {
     position: absolute; top: 8px; right: 10px; z-index: 5;
@@ -522,6 +547,18 @@
 <div id="lyrics-panel">
   <button id="lp-close" title="关闭歌词">×</button>
   <div id="lp-scroll"></div>
+</div>
+
+<!-- 会员/付费歌拦截弹窗 -->
+<div id="vip-pop">
+  <div id="vip-box">
+    <div id="vip-title">这是一首付费歌曲</div>
+    <p id="vip-desc">该曲目为会员或数字专辑内容。若你已在网易云购买或开通会员，可登录后回来播放；也可以跳到下一首可免费收听的歌。</p>
+    <div id="vip-btns">
+      <button id="vip-login">去网易云登录</button>
+      <button id="vip-skip">跳到下一首可听的</button>
+    </div>
+  </div>
 </div>
 
 
@@ -1638,36 +1675,34 @@ function enterFocus(track) {
   toolbar.classList.add('hidden');
   crosshair.classList.add('hidden');
   applyLyricsVisibility();
-  // 不再拦截付费歌：fee 只表示「这是付费商品」，判断不了用户买没买，
-  // 且 iframe 不带登录态。一律放行播放——已购买/会员的歌能正常出声；
-  // 未购买的歌网易云 iframe 会静音，由底部 hint 软性说明，不打断。
-  hideVipPop();
-  flashPaidHint(track);
-  playCurrent();   // 点卡即播（仍在用户手势栈内，稳定出声）
+  // 付费歌（fee=1会员 / fee=4数字专辑）：弹拦截窗，不直接播。
+  // 已知代价：区分不了"用户买没买"，已购买的歌也会被拦（fee + 跨域 iframe 无登录态所限）。
+  if (isVip(track)) {
+    showVipPop();
+  } else {
+    hideVipPop();
+    playCurrent();   // 点卡即播（仍在用户手势栈内，稳定出声）
+  }
 }
 
-// ── fee 仅作信息标注用（VIP 标签 + 软提示），不再拦截播放 ──
+// ── 会员/付费歌判定与拦截 ──
 // fee: 0免费 / 1会员 / 4数字专辑(付费) / 8低音质免费
 function isVip(track) { return track && (track.fee === 1 || track.fee === 4); }
 
-// 付费歌的软提示：放行播放，只在底部 hint 温和说明，几秒后恢复
-const pbHint = document.getElementById('pb-hint');
-const HINT_DEFAULT = '部分付费歌曲未购买时可能无声';
-let _hintTimer = null;
-function flashPaidHint(track) {
-  if (!pbHint) return;
-  if (_hintTimer) { clearTimeout(_hintTimer); _hintTimer = null; }
-  if (isVip(track)) {
-    pbHint.textContent = '付费歌曲 · 已购买或会员可正常收听';
-    pbHint.classList.add('flash');
-    _hintTimer = setTimeout(() => {
-      pbHint.classList.remove('flash');
-      pbHint.textContent = HINT_DEFAULT;
-    }, 4000);
-  } else {
-    pbHint.classList.remove('flash');
-    pbHint.textContent = HINT_DEFAULT;
+// 从 idx 之后找下一首非付费歌（循环一圈，找不到返回 -1）
+function nextFreeIdx(fromIdx) {
+  for (let step = 1; step <= TRACKS.length; step++) {
+    const j = (fromIdx + step) % TRACKS.length;
+    if (!isVip(TRACKS[j])) return j;
   }
+  return -1;
+}
+
+function showVipPop() {
+  const el = document.getElementById('vip-pop');
+  if (el) el.classList.add('on');
+  setPlayingUI(false);
+  stopProgress();
 }
 
 function hideVipPop() {
@@ -1690,6 +1725,24 @@ function exitFocus() {
 // fc-close 的 HTML 在脚本标签之后，延迟到 window load 后再绑定。
 window.addEventListener('load', () => {
   document.getElementById('fc-close')?.addEventListener('click', exitFocus);
+  // 付费拦截窗按钮（HTML 在脚本之后，延迟到 load 后绑定）
+  document.getElementById('vip-login')?.addEventListener('click', () => {
+    // 跳转网易云登录（新标签页），登录后回本站再点播放即可继承登录态
+    window.open('https://music.163.com/#/login', '_blank');
+  });
+  document.getElementById('vip-skip')?.addEventListener('click', () => {
+    hideVipPop();
+    const j = nextFreeIdx(currentTrackIdx);
+    if (j < 0) return;   // 整张歌单都是付费 → 没有可跳的免费歌
+    const t = TRACKS[j];
+    const mesh = meshes.find(m => m.userData.track && m.userData.track.id === t.id);
+    if (mesh) {
+      focusedMesh = mesh;
+      const p = mesh.position;
+      flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
+    }
+    enterFocus(t);
+  });
 });
 
 // 播放/暂停 UI 状态集中处理（含 #3 左下角图标转动）
@@ -1709,6 +1762,7 @@ pbPlay.addEventListener('click', () => {
     setPlayingUI(false);
     stopProgress();
   } else {
+    if (isVip(TRACKS[currentTrackIdx])) { showVipPop(); return; }
     playCurrent();
   }
 });
@@ -1717,22 +1771,23 @@ pbPrev.addEventListener('click', () => {
   const j = prevIdx(currentTrackIdx);
   if (j < 0) return;
   loadTrack(j, true);
-  flashPaidHint(TRACKS[j]);
-  playCurrent();
+  if (isVip(TRACKS[j])) showVipPop();
+  else playCurrent();
 });
 
 pbNext.addEventListener('click', () => {
   const j = nextIdx(currentTrackIdx);
   if (j < 0) return;
   loadTrack(j, true);
-  flashPaidHint(TRACKS[j]);
-  playCurrent();
+  if (isVip(TRACKS[j])) showVipPop();
+  else playCurrent();
 });
 
 // 用当前曲目加载播放器并出声（仅在用户手势栈内调用）
 function playCurrent() {
   if (currentTrackIdx < 0) return;
   const track = TRACKS[currentTrackIdx];
+  if (isVip(track)) { showVipPop(); return; }
   fcEmbed.src = `https://music.163.com/outchain/player?type=2&id=${track.id}&auto=1&height=66&_t=${Date.now()}`;
   setPlayingUI(true);
   startProgress();
@@ -1744,7 +1799,8 @@ function playCurrent() {
 function advanceNext() {
   setPlayingUI(false);
   if (loopMode === 'one') {
-    // 单曲循环：重头再播本首
+    // 单曲循环：重头再播本首（若本首付费则弹窗）
+    if (isVip(TRACKS[currentTrackIdx])) { showVipPop(); return; }
     playCurrent();
     return;
   }
@@ -1758,8 +1814,8 @@ function advanceNext() {
     const p = mesh.position;
     flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
   }
-  flashPaidHint(TRACKS[j]);
-  playCurrent();
+  if (isVip(TRACKS[j])) showVipPop();
+  else playCurrent();
 }
 
 // 上一首/下一首：受循环模式影响（loopMode: 'list' | 'one' | 'off'；shuffle 独立）
