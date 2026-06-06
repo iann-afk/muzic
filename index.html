@@ -105,6 +105,21 @@
   @keyframes u-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .u-name { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 500; }
   .u-sub { font-size: 9px; color: rgba(255,255,255,0.35); margin-top: 2px; }
+  /* 常驻「换歌单」入口：低饱和胶囊，可见但不抢视觉；hover 提亮 */
+  #u-change {
+    margin-left: 4px; flex: 0 0 auto;
+    height: 24px; padding: 0 10px; border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.5); font-size: 10px; letter-spacing: .02em;
+    cursor: pointer; white-space: nowrap;
+    transition: background .2s, color .2s, border-color .2s;
+    font-family: -apple-system, sans-serif;
+  }
+  #u-change:hover {
+    background: rgba(255,255,255,0.13); color: rgba(255,255,255,0.92);
+    border-color: rgba(255,255,255,0.3);
+  }
 
   /* ── Artist labels ── */
   .al { position: fixed; pointer-events: none; transform: translate(-50%,-50%);
@@ -432,6 +447,7 @@
     <div class="u-name" id="u-name">治愈系歌单</div>
     <div class="u-sub" id="u-sub">78 首 · 治愈纯音乐</div>
   </div>
+  <button id="u-change" title="粘链接换一个歌单">+ 换歌单</button>
 </div>
 
 <!-- Expandable playlist panel -->
@@ -1197,8 +1213,8 @@ function parseLrc(lrc) {
   return out;
 }
 
-function loadLyrics(track) {
-  parsedLyrics = parseLrc(LYRICS[track.id]);
+// 把解析好的歌词行渲染进面板
+function renderLyrics() {
   lyricActiveIdx = -1;
   lpScroll.innerHTML = '';
   if (!parsedLyrics.length) {
@@ -1213,6 +1229,43 @@ function loadLyrics(track) {
     lpScroll.appendChild(d);
   });
   lpScroll.style.transform = 'translateY(0)';
+}
+
+// 懒加载：LYRICS[id] 没有就按需向 /api/lyric 拉这一首；用 _lyricReqId 防竞态
+// （快速切歌时旧请求回来不该覆盖新歌）。LYRICS 内存缓存，本次会话不重复拉。
+let _lyricReqId = 0;
+function loadLyrics(track) {
+  parsedLyrics = parseLrc(LYRICS[track.id]);
+
+  if (parsedLyrics.length || LYRICS[track.id] !== undefined) {
+    // 已有数据（含已知「无词」），直接渲染
+    renderLyrics();
+    return;
+  }
+
+  // 未缓存 → 先显示载入态，再异步拉
+  parsedLyrics = [];
+  lyricActiveIdx = -1;
+  lpScroll.innerHTML = '<div id="lp-empty">载入歌词…</div>';
+
+  const reqId = ++_lyricReqId;
+  const wantId = track.id;
+  fetch('/api/lyric?id=' + encodeURIComponent(track.id))
+    .then(r => r.json())
+    .then(data => {
+      // 把结果写进内存缓存（即便无词也写空串，避免反复拉）
+      LYRICS[wantId] = (data && data.ok && data.lrc) ? data.lrc : '';
+      // 竞态保护：用户已切到别的歌就不要覆盖当前面板
+      if (reqId !== _lyricReqId || currentTrackIdx < 0 || TRACKS[currentTrackIdx]?.id !== wantId) return;
+      parsedLyrics = parseLrc(LYRICS[wantId]);
+      renderLyrics();
+    })
+    .catch(() => {
+      LYRICS[wantId] = '';
+      if (reqId !== _lyricReqId || TRACKS[currentTrackIdx]?.id !== wantId) return;
+      parsedLyrics = [];
+      renderLyrics();
+    });
 }
 
 function syncLyrics(sec) {
@@ -1479,6 +1532,12 @@ function togglePlaylist(force) {
 }
 document.getElementById('hud-user')?.addEventListener('click', () => togglePlaylist());
 document.getElementById('pp-close')?.addEventListener('click', () => togglePlaylist(false));
+// 「+ 换歌单」：展开面板并聚焦输入框（阻止冒泡，避免触发外层 hud-user 的普通展开）
+document.getElementById('u-change')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  togglePlaylist(true);
+  setTimeout(() => { const el = document.getElementById('pp-url'); if (el) el.focus(); }, 120);
+});
 
 // ── 标题/副标题同步成当前墙（默认或上传） ──
 (function syncWallLabels() {
