@@ -150,6 +150,10 @@
   #focus-card.on { opacity: 1; transform: translate(-50%,-50%) scale(1); pointer-events: all; }
   #fc-art { width: 100%; aspect-ratio: 1; overflow: hidden; position: relative; }
   #fc-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* 封面动效画布：覆盖在静态封面之上，播放时渲染碎片粒子+波纹 */
+  #fc-fx { position: absolute; inset: 0; width: 100%; height: 100%;
+    display: none; pointer-events: none; }
+  #fc-fx.on { display: block; }
   #fc-close {
     position: absolute; top: 12px; right: 12px; z-index: 5;
     width: 28px; height: 28px; border-radius: 50%;
@@ -383,15 +387,19 @@
   #lp-empty { font-size: 12px; color: rgba(255,255,255,0.4); text-align: center; padding: 20px 0;
     text-shadow: 0 1px 8px rgba(0,0,0,0.6); }
   /* lyrics toggle button inside focus card */
-  #fc-lyrics-toggle {
-    position: absolute; top: 12px; left: 12px; z-index: 5;
-    height: 28px; padding: 0 12px; border-radius: 14px;
-    background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2);
-    color: rgba(255,255,255,0.75); font-size: 11px; cursor: pointer;
-    display: flex; align-items: center; gap: 5px;
-    transition: background .15s; font-family: -apple-system, sans-serif;
+  /* 歌词面板关闭按钮（独立于卡片） */
+  #lp-close {
+    position: absolute; top: 8px; right: 10px; z-index: 5;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(10,10,16,0.6); border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.7); font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: auto; transition: background .15s, opacity .3s;
+    opacity: 0;
   }
-  #fc-lyrics-toggle:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  #lyrics-panel.on #lp-close { opacity: 0.6; }
+  #lyrics-panel.on:hover #lp-close { opacity: 1; }
+  #lp-close:hover { background: rgba(255,255,255,0.2); color: #fff; }
 
   /* ── Player progress with time (#8) ── */
   #pb-times { display: flex; align-items: center; gap: 5px; font-size: 9px;
@@ -498,9 +506,9 @@
 <!-- Focus glass card -->
 <div id="focus-card">
   <div id="fc-art">
-    <button id="fc-lyrics-toggle">♫ 歌词</button>
     <button id="fc-close">×</button>
     <img id="fc-img" src="" alt="">
+    <canvas id="fc-fx"></canvas>
   </div>
   <div id="fc-info">
     <div id="fc-title"></div>
@@ -512,6 +520,7 @@
 
 <!-- Lyrics panel (time-synced) -->
 <div id="lyrics-panel">
+  <button id="lp-close" title="关闭歌词">×</button>
   <div id="lp-scroll"></div>
 </div>
 
@@ -890,7 +899,111 @@ function extractCoverColor(url) {
   img.src = url;
 }
 
-// 流星（发光拖尾，加色混合更亮）#10
+// ═══════════════════════════════════════════════════════════
+// 封面动效（#5）：把焦点卡封面切成 N×N 碎片，播放时按伪节奏
+// 飘出/旋转/外扩再聚拢 + 一道从中心扩散的波纹。整张图操作，不抠图层。
+// 取不到跨域像素时自动降级（隐藏画布，静态封面照常显示）。
+// ═══════════════════════════════════════════════════════════
+const coverFX = (() => {
+  const canvas = document.getElementById('fc-fx');
+  const ctx = canvas ? canvas.getContext('2d') : null;
+  const GRID = 14;                 // 14×14 = 196 碎片
+  let img = null;                  // 已加载的封面 Image
+  let ready = false;               // 当前封面能否用于绘制（CORS 通过）
+  let cells = [];                  // 每块的 home 信息 + 随机相位
+  let size = 0;                    // 画布像素边长
+
+  function buildCells() {
+    cells = [];
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const cx = (gx + 0.5) / GRID - 0.5;   // -0.5..0.5 相对中心
+        const cy = (gy + 0.5) / GRID - 0.5;
+        cells.push({
+          gx, gy,
+          dist: Math.hypot(cx, cy),            // 离中心距离（波纹用）
+          ang: Math.atan2(cy, cx),             // 朝外方向（外扩用）
+          phase: Math.random() * Math.PI * 2,  // 个体相位（错落）
+          spin: (Math.random() - 0.5),         // 自转方向
+        });
+      }
+    }
+  }
+
+  function setCover(url) {
+    ready = false;
+    if (!canvas || !ctx || !url) return;
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = () => {
+      img = im;
+      if (!cells.length) buildCells();
+      ready = true;
+    };
+    im.onerror = () => { ready = false; };
+    im.src = url;
+  }
+
+  function resize() {
+    if (!canvas) return;
+    const r = canvas.getBoundingClientRect();
+    size = Math.max(2, Math.round(r.width));
+    canvas.width = size; canvas.height = size;
+  }
+
+  // pulse: 0..1 律动强度；st: 秒。返回是否成功绘制（否则调用方隐藏画布）
+  function render(st, pulse) {
+    if (!canvas || !ctx || !ready || !img) return false;
+    if (canvas.width < 2) resize();
+    const N = GRID, cell = size / N;
+    ctx.clearRect(0, 0, size, size);
+
+    // 波纹：从中心向外扩散的环（周期循环）
+    const wavePos = (st * 0.35) % 1;            // 0..1 环的当前半径
+    const amp = pulse;                          // 整体位移幅度跟随律动
+
+    const iw = img.width, ih = img.height;
+    // 用 cover 方式把方图映射到正方源（取中心正方形）
+    const srcSize = Math.min(iw, ih);
+    const srcX0 = (iw - srcSize) / 2, srcY0 = (ih - srcSize) / 2;
+    const sCell = srcSize / N;
+
+    for (const c of cells) {
+      // 波纹：当环经过该块时给一个外推脉冲
+      const ring = 1 - Math.min(1, Math.abs(c.dist / 0.71 - wavePos) * 6);
+      const ripple = Math.max(0, ring);
+      // 个体浮动（错落的呼吸）
+      const fl = Math.sin(st * 2.4 + c.phase);
+      // 外扩位移：方向朝外，量 = (波纹 + 浮动) × 律动
+      const push = (ripple * 0.5 + (fl * 0.5 + 0.5) * 0.22) * amp * cell * 1.6;
+      const ox = Math.cos(c.ang) * push;
+      const oy = Math.sin(c.ang) * push;
+      // 轻微缩放 + 自转
+      const sc = 1 + (ripple * 0.18 + 0.06 * fl) * amp;
+      const rot = (c.spin * (ripple * 0.5 + 0.12 * fl)) * amp;
+
+      const dx = c.gx * cell + cell / 2 + ox;
+      const dy = c.gy * cell + cell / 2 + oy;
+      const dw = cell * sc + 0.6;               // +0.6 消除缝隙
+      const dh = cell * sc + 0.6;
+
+      ctx.save();
+      ctx.translate(dx, dy);
+      if (rot) ctx.rotate(rot);
+      ctx.globalAlpha = 1;
+      ctx.drawImage(
+        img,
+        srcX0 + c.gx * sCell, srcY0 + c.gy * sCell, sCell, sCell,
+        -dw / 2, -dh / 2, dw, dh
+      );
+      ctx.restore();
+    }
+    return true;
+  }
+
+  window.addEventListener('resize', resize);
+  return { setCover, render, resize };
+})();
 const METEOR_COUNT = 6;
 const meteors = [];
 function makeMeteor() {
@@ -1222,6 +1335,7 @@ function updateBillboard() {
 // ═══════════════════════════════════════════════════════════
 let focusMode = false;
 let focusedMesh = null;
+let playingMesh = null;   // 当前播放的卡（关闭焦点卡后仍保留，用于背景选中光照#4）
 const focusCard  = document.getElementById('focus-card');
 const fcImg      = document.getElementById('fc-img');
 const fcTitle    = document.getElementById('fc-title');
@@ -1301,7 +1415,7 @@ function updateScrollTitle(text) {
 // ── #9 歌词：解析 lrc、渲染、按时间轴高亮 ──
 const lyricsPanel = document.getElementById('lyrics-panel');
 const lpScroll    = document.getElementById('lp-scroll');
-let lyricsOn = false;          // 用户是否开启歌词显示
+let lyricsOn = true;           // 选中卡片后歌词默认显示(#2)；由歌词面板的关闭按钮独立关闭
 let parsedLyrics = [];         // [{t: 秒, text}] — 仅 synced 时有时间
 let lyricActiveIdx = -1;
 let lyricSynced = false;       // 当前歌词是否带时间戳（决定能否高亮）
@@ -1433,8 +1547,8 @@ function syncLyrics(sec) {
 }
 
 function applyLyricsVisibility() {
-  // 只有在 focus 且用户开启时才显示
-  if (lyricsOn && focusMode) lyricsPanel.classList.add('on');
+  // 歌词显示只看用户是否开启，独立于焦点卡开合(#1)
+  if (lyricsOn) lyricsPanel.classList.add('on');
   else lyricsPanel.classList.remove('on');
 }
 
@@ -1449,6 +1563,8 @@ function loadTrack(idx, autoplay) {
   // 更新 focus card（切歌时也唤出大卡，新歌专辑卡始终显示）
   fcImg.src            = track.alPicUrl;
   extractCoverColor(track.alPicUrl);   // 取封面主色驱动光场/星空(A/B)
+  coverFX.setCover(track.alPicUrl);    // 封面碎片动效(#5)
+  requestAnimationFrame(() => coverFX.resize());  // 卡片就位后按实际尺寸初始化画布
   fcTitle.textContent  = track.name;
   fcArtist.textContent = track.ar.join(' / ');
   fcYear.textContent   = track.alName;
@@ -1457,9 +1573,9 @@ function loadTrack(idx, autoplay) {
   toolbar.classList.add('hidden');
   crosshair.classList.add('hidden');
   applyLyricsVisibility();
-  // 同步更新 focusedMesh
+  // 同步更新 focusedMesh + playingMesh（playingMesh 在关卡后仍保留，用于背景光照#4）
   const mesh = meshes.find(m => m.userData.track && m.userData.track.id === track.id);
-  if (mesh) focusedMesh = mesh;
+  if (mesh) { focusedMesh = mesh; playingMesh = mesh; }
   // 更新 player bar
   pbThumb.src          = track.alPicUrl;
   updateScrollTitle(track.name);
@@ -1473,6 +1589,7 @@ function loadTrack(idx, autoplay) {
 
 function enterFocus(track) {
   focusMode = true;
+  lyricsOn = true;         // 选中卡片 → 歌词默认显示(#2)
   togglePlaylist(false);   // #2 选歌后自动收起歌单
   const idx = TRACKS.findIndex(t => t.id === track.id);
   loadTrack(idx, true);
@@ -1523,7 +1640,8 @@ function exitFocus() {
   focusCard.classList.remove('on');
   toolbar.classList.remove('hidden');
   crosshair.classList.remove('hidden');
-  lyricsPanel.classList.remove('on');
+  // 不再联动关闭歌词(#1)：歌词由自己的关闭按钮独立控制
+  // 不清 playingMesh：背景墙里当前播放的卡保留选中光照(#4)
   hideVipPop();
   // player bar 保留，embed 继续发声
 }
@@ -1645,12 +1763,30 @@ document.getElementById('tb-center')?.addEventListener('click', recenter);
 // 退而用本地静音兜底（embed 自身音量条仍可用）。先保留滑块，绑一个本地占位。
 document.getElementById('vol-slider')?.addEventListener('input', () => { /* embed 跨域，音量由其自带控件控制 */ });
 
-// #9 歌词开关
-document.getElementById('fc-lyrics-toggle')?.addEventListener('click', () => {
-  lyricsOn = !lyricsOn;
-  const btn = document.getElementById('fc-lyrics-toggle');
-  btn.style.background = lyricsOn ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.5)';
+// #9 歌词关闭按钮（独立于卡片#1）：点 × 仅关歌词
+document.getElementById('lp-close')?.addEventListener('click', () => {
+  lyricsOn = false;
   applyLyricsVisibility();
+});
+
+// #3 关闭焦点卡后，点底部播放器左侧专辑小图标 → 重新唤出焦点卡
+pbThumb.style.cursor = 'pointer';
+pbThumb.title = '展开专辑卡';
+pbThumb.addEventListener('click', () => {
+  if (currentTrackIdx < 0) return;
+  if (focusMode) return;                 // 已经开着就不重复
+  const track = TRACKS[currentTrackIdx];
+  focusMode = true;
+  focusCard.classList.add('on');
+  toolbar.classList.add('hidden');
+  crosshair.classList.add('hidden');
+  // 镜头飞回该卡
+  const mesh = meshes.find(m => m.userData.track && m.userData.track.id === track.id);
+  if (mesh) {
+    focusedMesh = mesh;
+    const p = mesh.position;
+    flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
+  }
 });
 
 // #4 歌单面板
@@ -1883,6 +2019,7 @@ function updateCardFX() {
   for (let i = 0; i < meshes.length; i++) {
     const m = meshes[i];
     if (m === focusedMesh) continue;
+    if (m === playingMesh && _fxPulse > 0.01) continue;   // 播放中的卡由下方脉动接管(#4)
     let target = m.userData.baseScale;
     if (m === hoveredMesh) target *= 1.08;           // 悬停放大
     // 选中"按一下"：先弹大再回落
@@ -1895,13 +2032,22 @@ function updateCardFX() {
   }
   if (punchMesh) { punchT += 0.06; if (punchT >= 1) punchMesh = null; }
 
+  const st = performance.now() * 0.001;
+  const beat = 0.5 + 0.5 * Math.sin(st * 3.0);
+
   // 聚焦卡：播放时随伪节奏轻微脉动放大（不模糊——只是缩放贴图）
   if (focusedMesh) {
-    const st = performance.now() * 0.001;
-    const beat = 0.5 + 0.5 * Math.sin(st * 3.0);
     const pulseScale = focusedMesh.userData.baseScale * (1.18 + 0.10 * beat * _fxPulse);
     const cur = focusedMesh.scale.x;
     focusedMesh.scale.setScalar(cur + (pulseScale - cur) * 0.2);
+  }
+
+  // 关焦点卡后：背景墙里正在播放的卡保持脉动放大，明确"选中态"(#4)
+  // （配合背后光场，整张卡视觉上明显被点亮、在动）
+  if (playingMesh && playingMesh !== focusedMesh && _fxPulse > 0.01) {
+    const pulseScale = playingMesh.userData.baseScale * (1.0 + (0.12 + 0.08 * beat) * _fxPulse);
+    const cur = playingMesh.scale.x;
+    playingMesh.scale.setScalar(cur + (pulseScale - cur) * 0.2);
   }
 }
 
@@ -1930,10 +2076,18 @@ document.addEventListener('dblclick', e => {
 // ── 播放视觉 FX 状态 ──
 let _fxPulse = 0;        // 0=未播放静止, →1 播放律动满
 let _fxScale = 0;        // 光场当前尺寸（平滑）
+const fcFx = document.getElementById('fc-fx');
+let _coverPulseVal = 0;  // 封面碎片律动强度（平滑）
+// 焦点卡碎片律动强度：播放中拉满，暂停回落到 0（碎片归位=静态封面）
+function _coverPulse() {
+  const target = (isPlaying && focusMode) ? 1 : 0;
+  _coverPulseVal += (target - _coverPulseVal) * 0.06;
+  return _coverPulseVal;
+}
 // 伪节奏：本地计时 playElapsed 驱动的复合正弦，模拟有起伏的节拍
 function updateMusicFX(st) {
-  // 目标律动强度：播放中且在 focus 时拉满，否则回落
-  const active = isPlaying && focusMode;
+  // 目标律动强度：只要在播放就亮（不依赖焦点卡是否打开）(#4)
+  const active = isPlaying && playingMesh;
   const target = active ? 1 : 0;
   _fxPulse += (target - _fxPulse) * 0.05;
 
@@ -1954,9 +2108,10 @@ function updateMusicFX(st) {
   const sub  = 0.5 + 0.5 * Math.sin(st * 1.3 + 1.0);        // 副波
   const pulse = (beat * 0.7 + sub * 0.3);
 
-  // 光场跟随聚焦卡位置，落在卡片背后
-  if (focusedMesh) {
-    const p = focusedMesh.position;
+  // 光场跟随当前播放卡位置（关焦点卡后仍亮在背景墙那张卡上#4）
+  const lightMesh = playingMesh || focusedMesh;
+  if (lightMesh) {
+    const p = lightMesh.position;
     glowSprite.position.set(p.x, p.y, p.z - 1.5);
     glowSprite2.position.set(p.x, p.y, p.z - 2.5);
   }
@@ -1977,6 +2132,15 @@ function animate() {
   updateBreath(_t);   // #11 卡片呼吸（focus 卡已排除）
   updateHover();      // 悬停检测（光标 + 放大目标）
   updateCardFX();     // 平滑应用 hover / 选中动画
+
+  // 封面碎片动效(#5)：仅焦点卡打开时渲染；幅度 = 播放律动。
+  // 暂停/未播时 pulse→0，碎片回到 home 网格（即静态封面），随后隐藏画布。
+  if (focusMode) {
+    const drew = coverFX.render(_t, _coverPulse());
+    fcFx && fcFx.classList.toggle('on', drew);
+  } else if (fcFx) {
+    fcFx.classList.remove('on');
+  }
 
   // Camera fly-to
   if (flyTarget) {
