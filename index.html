@@ -817,6 +817,79 @@ const starMat = new THREE.PointsMaterial({
 const starField = new THREE.Points(starGeo, starMat);
 scene.add(starField);
 
+// ═══════════════════════════════════════════════════════════
+// 播放视觉 FX：封面色光场(A) + 星空响应(B)
+// 全部由本地播放计时驱动（伪节奏），不依赖真实音频（跨域 iframe 拿不到）
+// ═══════════════════════════════════════════════════════════
+// 光场：聚焦卡背后一团柔和的加色光晕 sprite，颜色取自当前专辑封面主色
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const glowMat = new THREE.SpriteMaterial({
+  map: glowTex, color: 0x6688ff, transparent: true, opacity: 0,
+  depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending
+});
+const glowSprite = new THREE.Sprite(glowMat);
+glowSprite.scale.set(0.001, 0.001, 1);
+glowSprite.renderOrder = -1;
+scene.add(glowSprite);
+
+// 第二层光场：更大更淡，营造层次
+const glowMat2 = new THREE.SpriteMaterial({
+  map: glowTex, color: 0x6688ff, transparent: true, opacity: 0,
+  depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending
+});
+const glowSprite2 = new THREE.Sprite(glowMat2);
+glowSprite2.scale.set(0.001, 0.001, 1);
+glowSprite2.renderOrder = -2;
+scene.add(glowSprite2);
+
+// 当前播放歌曲的封面主色（THREE.Color），默认冷蓝
+let fxColor = new THREE.Color(0x6688ff);
+let fxColorTarget = new THREE.Color(0x6688ff);
+const _defaultStarColor = new THREE.Color(0xffffff);
+
+// 从封面图采样主色（取较饱和、较亮的平均色）。封面跨域，需 crossOrigin。
+function extractCoverColor(url) {
+  if (!url) return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    try {
+      const s = 24;
+      const cv = document.createElement('canvas'); cv.width = cv.height = s;
+      const cx = cv.getContext('2d');
+      cx.drawImage(img, 0, 0, s, s);
+      const d = cx.getImageData(0, 0, s, s).data;
+      let r = 0, g = 0, b = 0, wsum = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const rr = d[i], gg = d[i+1], bb = d[i+2];
+        const mx = Math.max(rr, gg, bb), mn = Math.min(rr, gg, bb);
+        const sat = mx === 0 ? 0 : (mx - mn) / mx;
+        // 加权：偏向有色彩、不太暗也不死白的像素
+        const w = sat * (mx / 255) * (1 - Math.abs(mx - 150) / 255) + 0.05;
+        r += rr * w; g += gg * w; b += bb * w; wsum += w;
+      }
+      if (wsum > 0) {
+        r /= wsum; g /= wsum; b /= wsum;
+        // 提亮一点保证发光感
+        const boost = 1.25;
+        fxColorTarget.setRGB(
+          Math.min(1, r/255*boost), Math.min(1, g/255*boost), Math.min(1, b/255*boost)
+        );
+      }
+    } catch (e) { /* 跨域取色失败就保持上一色 */ }
+  };
+  img.src = url;
+}
+
 // 流星（发光拖尾，加色混合更亮）#10
 const METEOR_COUNT = 6;
 const meteors = [];
@@ -1197,7 +1270,11 @@ function startProgress() {
     pbProgressFill.style.width = pct + '%';
     pbCur.textContent = fmtTime(playElapsed);
     syncLyrics(playElapsed);
-    if (playElapsed >= curDuration) clearInterval(progressTimer);
+    if (playElapsed >= curDuration) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+      advanceNext();   // 播完自动切下一首（按 loopMode/shuffle）
+    }
   }, 1000);
 }
 
@@ -1371,6 +1448,7 @@ function loadTrack(idx, autoplay) {
   pbDur.textContent = fmtTime(curDuration);
   // 更新 focus card（切歌时也唤出大卡，新歌专辑卡始终显示）
   fcImg.src            = track.alPicUrl;
+  extractCoverColor(track.alPicUrl);   // 取封面主色驱动光场/星空(A/B)
   fcTitle.textContent  = track.name;
   fcArtist.textContent = track.ar.join(' / ');
   fcYear.textContent   = track.alName;
@@ -1499,6 +1577,30 @@ function playCurrent() {
   fcEmbed.src = `https://music.163.com/outchain/player?type=2&id=${track.id}&auto=1&height=66&_t=${Date.now()}`;
   setPlayingUI(true);
   startProgress();
+}
+
+// 播完自动续播：单曲循环→重播本首；否则按 nextIdx 切下一首；off 到末尾则停。
+// 注意：这是从计时器触发（非用户手势），同标签页内 iframe 已解锁音频，
+// 续播一般能继续出声；若浏览器拦截自动播放，用户点一下播放即可恢复。
+function advanceNext() {
+  setPlayingUI(false);
+  if (loopMode === 'one') {
+    // 单曲循环：重头再播本首
+    playCurrent();
+    return;
+  }
+  const j = nextIdx(currentTrackIdx);
+  if (j < 0) return;   // loop=off 且已到末尾 → 停
+  loadTrack(j, true);
+  // 让镜头也飞到下一张卡，视觉跟随
+  const mesh = meshes.find(m => m.userData.track && m.userData.track.id === TRACKS[j].id);
+  if (mesh) {
+    focusedMesh = mesh;
+    const p = mesh.position;
+    flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
+  }
+  flashPaidHint(TRACKS[j]);
+  playCurrent();
 }
 
 // 上一首/下一首：受循环模式影响（loopMode: 'list' | 'one' | 'off'；shuffle 独立）
@@ -1792,6 +1894,15 @@ function updateCardFX() {
     m.scale.setScalar(cur + (target - cur) * 0.25);   // 平滑过渡
   }
   if (punchMesh) { punchT += 0.06; if (punchT >= 1) punchMesh = null; }
+
+  // 聚焦卡：播放时随伪节奏轻微脉动放大（不模糊——只是缩放贴图）
+  if (focusedMesh) {
+    const st = performance.now() * 0.001;
+    const beat = 0.5 + 0.5 * Math.sin(st * 3.0);
+    const pulseScale = focusedMesh.userData.baseScale * (1.18 + 0.10 * beat * _fxPulse);
+    const cur = focusedMesh.scale.x;
+    focusedMesh.scale.setScalar(cur + (pulseScale - cur) * 0.2);
+  }
 }
 
 // Double-click: fly toward card
@@ -1816,6 +1927,50 @@ document.addEventListener('dblclick', e => {
 // ═══════════════════════════════════════════════════════════
 // RENDER LOOP
 // ═══════════════════════════════════════════════════════════
+// ── 播放视觉 FX 状态 ──
+let _fxPulse = 0;        // 0=未播放静止, →1 播放律动满
+let _fxScale = 0;        // 光场当前尺寸（平滑）
+// 伪节奏：本地计时 playElapsed 驱动的复合正弦，模拟有起伏的节拍
+function updateMusicFX(st) {
+  // 目标律动强度：播放中且在 focus 时拉满，否则回落
+  const active = isPlaying && focusMode;
+  const target = active ? 1 : 0;
+  _fxPulse += (target - _fxPulse) * 0.05;
+
+  // 颜色平滑过渡到当前封面主色
+  fxColor.lerp(fxColorTarget, 0.04);
+  // 星空整体染上封面色（播放越强染得越明显），不播时回到白
+  starMat.color.copy(_defaultStarColor).lerp(fxColor, 0.55 * _fxPulse);
+  glowMat.color.copy(fxColor);
+  glowMat2.color.copy(fxColor);
+
+  if (_fxPulse < 0.01 && !active) {
+    glowMat.opacity = 0; glowMat2.opacity = 0;
+    return;
+  }
+
+  // 伪节奏脉冲：两个不同频率正弦叠加，做出"有节拍起伏"的呼吸
+  const beat = 0.5 + 0.5 * Math.sin(st * 3.0);              // 主拍 ~0.48s
+  const sub  = 0.5 + 0.5 * Math.sin(st * 1.3 + 1.0);        // 副波
+  const pulse = (beat * 0.7 + sub * 0.3);
+
+  // 光场跟随聚焦卡位置，落在卡片背后
+  if (focusedMesh) {
+    const p = focusedMesh.position;
+    glowSprite.position.set(p.x, p.y, p.z - 1.5);
+    glowSprite2.position.set(p.x, p.y, p.z - 2.5);
+  }
+
+  // 尺寸 + 透明度随脉冲律动（动效明显）
+  const baseSize = 26;
+  const sizeWobble = baseSize * (0.82 + 0.30 * pulse) * _fxPulse;
+  _fxScale += (sizeWobble - _fxScale) * 0.18;
+  glowSprite.scale.set(_fxScale, _fxScale, 1);
+  glowSprite2.scale.set(_fxScale * 1.7, _fxScale * 1.7, 1);
+  glowMat.opacity  = (0.30 + 0.32 * pulse) * _fxPulse;
+  glowMat2.opacity = (0.12 + 0.18 * pulse) * _fxPulse;
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const _t = performance.now() * 0.001;
@@ -1859,8 +2014,13 @@ function animate() {
   } else {
     // ── 星空闪烁（辉光 sprite + 整体明暗呼吸 + 局部抖动）#10 ──
     const st = performance.now() * 0.001;
-    starMat.opacity = 0.70 + 0.25 * Math.sin(st * 1.2);
-    starMat.size = 1.05 + 0.18 * Math.sin(st * 2.3);
+
+    // ── 播放视觉 FX：色光场(A) + 星空响应(B) ──
+    updateMusicFX(st);
+
+    // 播放时星空脉动更明显（_fxPulse: 0→静止基线, 1→满播放律动）
+    starMat.opacity = 0.70 + (0.25 + 0.22 * _fxPulse) * Math.sin(st * (1.2 + 1.0 * _fxPulse));
+    starMat.size = 1.05 + (0.18 + 0.35 * _fxPulse) * Math.sin(st * (2.3 + 1.4 * _fxPulse));
     const starPosArr = starGeo.attributes.position.array;
     const slice = Math.floor(STAR_N / 8);
     const base = Math.floor(st * 30) % 8 * slice;
