@@ -295,6 +295,34 @@
     display: flex; align-items: center; justify-content: center; }
   #pp-close:hover { background: rgba(255,255,255,0.18); color: #fff; }
   #pp-list { overflow-y: auto; padding: 6px 0; }
+  /* ── 上传入口（#1）：复用面板视觉语言 ── */
+  #pp-upload { display: flex; gap: 6px; padding: 8px 14px 4px; }
+  #pp-url {
+    flex: 1; min-width: 0; background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    padding: 7px 10px; color: rgba(255,255,255,0.85); font-size: 12px;
+    outline: none; transition: border-color .2s, background .2s;
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+  }
+  #pp-url::placeholder { color: rgba(255,255,255,0.3); }
+  #pp-url:focus { border-color: rgba(255,255,255,0.32); background: rgba(255,255,255,0.09); }
+  #pp-load {
+    flex: 0 0 auto; background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
+    padding: 7px 12px; color: rgba(255,255,255,0.85); font-size: 12px;
+    cursor: pointer; transition: background .2s; white-space: nowrap;
+  }
+  #pp-load:hover { background: rgba(255,255,255,0.2); }
+  #pp-load:disabled { opacity: .5; cursor: default; }
+  #pp-upload-msg { padding: 0 14px 6px; font-size: 11px; min-height: 14px;
+    color: rgba(255,255,255,0.4); transition: color .2s; }
+  #pp-upload-msg.err { color: rgba(255,140,140,0.85); }
+  #pp-upload-msg.ok { color: rgba(150,220,170,0.85); }
+  #pp-reset-wrap { padding: 0 14px 8px; min-height: 0; }
+  #pp-reset { display: none; font-size: 11px; color: rgba(255,255,255,0.4);
+    cursor: pointer; transition: color .2s; }
+  #pp-reset:hover { color: rgba(255,255,255,0.75); }
+  #pp-reset.show { display: inline-block; }
   .pp-row { display: flex; align-items: center; gap: 9px; padding: 8px 14px; cursor: pointer;
     transition: background .12s; }
   .pp-row:hover { background: rgba(255,255,255,0.07); }
@@ -401,8 +429,8 @@
 <div id="hud-user" title="展开歌单">
   <div class="u-av" id="u-av">♪</div>
   <div>
-    <div class="u-name">治愈系歌单</div>
-    <div class="u-sub">78 首 · 治愈纯音乐</div>
+    <div class="u-name" id="u-name">治愈系歌单</div>
+    <div class="u-sub" id="u-sub">78 首 · 治愈纯音乐</div>
   </div>
 </div>
 
@@ -412,6 +440,12 @@
     <span id="pp-title">治愈系歌单 · 78 首</span>
     <button id="pp-close" title="收起">×</button>
   </div>
+  <div id="pp-upload">
+    <input id="pp-url" type="text" placeholder="粘网易云歌单链接 → 换墙" spellcheck="false" autocomplete="off">
+    <button id="pp-load" title="载入歌单">载入</button>
+  </div>
+  <div id="pp-upload-msg"></div>
+  <div id="pp-reset-wrap"><span id="pp-reset" title="回到默认治愈歌单">↺ 恢复默认墙</span></div>
   <div id="pp-list"></div>
 </div>
 
@@ -475,9 +509,9 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════
-// DATA  (60 tracks, Post-Britpop)
+// DATA  (default wall · 治愈纯音乐)
 // ═══════════════════════════════════════════════════════════
-const TRACKS = [
+let TRACKS = [
   {"id":3357711182,"name":"花信子","ar":["心语馆"],"alName":"花信子","alPicUrl":"https://p2.music.126.net/dOAZT8apuhXKOM26eiwgfA==/109951172865261691.jpg","fee":8},
   {"id":2682678391,"name":"逃向春天","ar":["凌晨一点的莱茵猫","心语馆"],"alName":"Flee towards Spring","alPicUrl":"https://p2.music.126.net/c5L3cDpqOXV3-QZzxKfPCg==/109951170586448192.jpg","fee":8},
   {"id":3382255069,"name":"夏 日 回 响 (Midsummer Reprise)","ar":["凌晨一点的莱茵猫"],"alName":"Midsummer Reprise","alPicUrl":"https://p2.music.126.net/pWW-Fw1AdYBMHZtIQb0jdQ==/109951173223895622.jpg","fee":8},
@@ -572,9 +606,56 @@ const LYRICS = {
   // demo 占位（纯音乐多数无词；此条仅演示同步高亮，可删）
   2150491694: "[00:00.00]3:03 PM\n[00:05.00]instrumental\n[00:15.00]· · ·\n[00:30.00]（纯音乐 · 暂无歌词）\n[00:45.00]· · ·"
 };
-const DURATIONS = {
+let DURATIONS = {
   // 例: 2150491694: 183
 };
+
+// ═══════════════════════════════════════════════════════════
+// 上传歌单（#1）：换墙 + 真实时长
+// ───────────────────────────────────────────────────────────
+// 默认墙保留为上面的 TRACKS。若 localStorage 里存了用户上传过的歌单
+// （已规范化为墙所需结构），就在「建墙代码运行之前」整体替换 TRACKS /
+// DURATIONS，建墙逻辑完全不改、照常从 TRACKS 同步构建。
+//   - 网络请求只在「粘链接载入」那一刻发生（见底部 loadPlaylistFromUrl），
+//     成功后把规范化结果写进 localStorage 再 reload；
+//   - 普通刷新走的是这里的同步读取，无需 await，建墙路径零改动。
+// API 返回的 ar 是字符串、含 dt(ms)；墙需要 ar 数组 + alName + fee。
+// ═══════════════════════════════════════════════════════════
+const PLAYLIST_CACHE_KEY = 'muzic_playlist_v1';
+let WALL_NAME = '治愈系歌单';
+let WALL_SUB  = '78 首 · 治愈纯音乐';
+
+// API track → 墙结构；同时回填 DURATIONS[id]=秒
+function normalizeApiTrack(t) {
+  if (t.dt) DURATIONS[t.id] = Math.round(t.dt / 1000);
+  const arArr = typeof t.ar === 'string'
+    ? t.ar.split(' / ').filter(Boolean)
+    : (Array.isArray(t.ar) ? t.ar : ['未知']);
+  return {
+    id: t.id,
+    name: t.name || '未知',
+    ar: arArr.length ? arArr : ['未知'],
+    alName: t.alName || t.name || '未知',
+    alPicUrl: t.alPicUrl || '',
+    fee: typeof t.fee === 'number' ? t.fee : 0,
+  };
+}
+
+(function applyStoredPlaylist() {
+  try {
+    const raw = localStorage.getItem(PLAYLIST_CACHE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.tracks) || data.tracks.length === 0) return;
+    DURATIONS = {};
+    TRACKS = data.tracks.map(normalizeApiTrack);
+    WALL_NAME = data.name || '我的歌单';
+    WALL_SUB  = `${TRACKS.length} 首` + (data.truncated ? ` · 已截断到 ${TRACKS.length}` : '');
+  } catch (e) {
+    // 缓存坏了就回退默认墙，不影响启动
+    console.warn('playlist cache parse failed, fallback to default wall', e);
+  }
+})();
 
 // ═══════════════════════════════════════════════════════════
 // CONFIG
@@ -1398,6 +1479,59 @@ function togglePlaylist(force) {
 }
 document.getElementById('hud-user')?.addEventListener('click', () => togglePlaylist());
 document.getElementById('pp-close')?.addEventListener('click', () => togglePlaylist(false));
+
+// ── 标题/副标题同步成当前墙（默认或上传） ──
+(function syncWallLabels() {
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('pp-title', `${WALL_NAME} · ${TRACKS.length} 首`);
+  set('u-name', WALL_NAME);
+  set('u-sub', WALL_SUB);
+  set('ht-sub', WALL_SUB);
+})();
+
+// ── 上传入口（#1）：粘链接 → 调 /api/playlist 验证 → 存缓存 → reload 换墙 ──
+const ppUrl = document.getElementById('pp-url');
+const ppLoad = document.getElementById('pp-load');
+const ppMsg = document.getElementById('pp-upload-msg');
+function setMsg(txt, kind) {
+  if (!ppMsg) return;
+  ppMsg.textContent = txt || '';
+  ppMsg.className = kind || '';
+}
+async function loadPlaylistFromUrl() {
+  const raw = (ppUrl?.value || '').trim();
+  if (!raw) { setMsg('先粘一个网易云歌单链接', 'err'); return; }
+  if (ppLoad) ppLoad.disabled = true;
+  setMsg('载入中…', '');
+  try {
+    const resp = await fetch('/api/playlist?url=' + encodeURIComponent(raw));
+    const data = await resp.json();
+    if (!resp.ok || !data.ok || !Array.isArray(data.tracks) || data.tracks.length === 0) {
+      setMsg((data && data.hint) || (data && data.error) || '载入失败，换个链接试试', 'err');
+      if (ppLoad) ppLoad.disabled = false;
+      return;
+    }
+    localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify({
+      id: data.id, name: data.name, truncated: data.truncated, tracks: data.tracks,
+    }));
+    setMsg(`已载入《${data.name}》${data.returned} 首，正在换墙…`, 'ok');
+    setTimeout(() => location.reload(), 600);
+  } catch (e) {
+    setMsg('网络或接口异常，稍后再试', 'err');
+    if (ppLoad) ppLoad.disabled = false;
+  }
+}
+ppLoad?.addEventListener('click', loadPlaylistFromUrl);
+ppUrl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPlaylistFromUrl(); });
+
+// ── 恢复默认墙：仅当当前是上传的墙时显示 ──
+const ppReset = document.getElementById('pp-reset');
+if (ppReset && localStorage.getItem(PLAYLIST_CACHE_KEY)) ppReset.classList.add('show');
+ppReset?.addEventListener('click', () => {
+  localStorage.removeItem(PLAYLIST_CACHE_KEY);
+  setMsg('已恢复默认墙，正在刷新…', 'ok');
+  setTimeout(() => location.reload(), 400);
+});
 
 
 // ═══════════════════════════════════════════════════════════
