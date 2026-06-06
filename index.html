@@ -908,10 +908,13 @@ const coverFX = (() => {
   const canvas = document.getElementById('fc-fx');
   const ctx = canvas ? canvas.getContext('2d') : null;
   const GRID = 14;                 // 14×14 = 196 碎片
-  let img = null;                  // 已加载的封面 Image
-  let ready = false;               // 当前封面能否用于绘制（CORS 通过）
-  let cells = [];                  // 每块的 home 信息 + 随机相位
+  let img = null;                  // 当前封面 Image
+  let ready = false;               // 当前封面能否用于绘制（CORS 通过 + 已解码）
+  let cells = [];                  // 网格（所有封面通用，只建一次）
   let size = 0;                    // 画布像素边长
+
+  // 封面缓存：url → { im:Image, ok:bool }。载墙时后台预解码，选中时零等待。
+  const cache = new Map();
 
   function buildCells() {
     cells = [];
@@ -929,18 +932,50 @@ const coverFX = (() => {
       }
     }
   }
+  buildCells();   // 网格对所有封面一致，初始化时建一次即可
+
+  // 预解码一张封面进缓存（已在缓存则跳过）。返回 Promise 便于批量。
+  function preloadOne(url) {
+    if (!url || cache.has(url)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = () => { cache.set(url, { im, ok: true }); resolve(); };
+      im.onerror = () => { cache.set(url, { im: null, ok: false }); resolve(); };
+      im.src = url;
+    });
+  }
+
+  // 载墙时调用：后台静默预加载全部封面（不阻塞页面），小并发避免一次几十个请求拥塞
+  async function preloadAll(urls) {
+    const list = [...new Set(urls.filter(Boolean))];
+    const CONCURRENCY = 6;
+    let i = 0;
+    async function worker() {
+      while (i < list.length) {
+        const u = list[i++];
+        await preloadOne(u);
+      }
+    }
+    const workers = [];
+    for (let k = 0; k < CONCURRENCY; k++) workers.push(worker());
+    await Promise.all(workers);
+  }
 
   function setCover(url) {
-    ready = false;
+    ready = false; img = null;
     if (!canvas || !ctx || !url) return;
+    const hit = cache.get(url);
+    if (hit) {
+      // 缓存命中：已解码，立即可用，零等待
+      if (hit.ok && hit.im) { img = hit.im; ready = true; }
+      return;
+    }
+    // 未命中（极少数，预加载没覆盖到）：现下载，回填缓存
     const im = new Image();
     im.crossOrigin = 'anonymous';
-    im.onload = () => {
-      img = im;
-      if (!cells.length) buildCells();
-      ready = true;
-    };
-    im.onerror = () => { ready = false; };
+    im.onload = () => { cache.set(url, { im, ok: true }); img = im; ready = true; };
+    im.onerror = () => { cache.set(url, { im: null, ok: false }); ready = false; };
     im.src = url;
   }
 
@@ -1002,7 +1037,7 @@ const coverFX = (() => {
   }
 
   window.addEventListener('resize', resize);
-  return { setCover, render, resize };
+  return { setCover, render, resize, preloadAll };
 })();
 const METEOR_COUNT = 6;
 const meteors = [];
@@ -1183,9 +1218,15 @@ TRACKS.forEach((track, i) => {
   );
 });
 
-// ═══════════════════════════════════════════════════════════
-// CONSTELLATION LINES  (same-artist clusters)
-// ═══════════════════════════════════════════════════════════
+// 封面碎片动效预加载(#5 优化)：载墙后台静默预解码所有封面，
+// 选中时直接命中缓存、零等待。与上面 TextureLoader 同 URL，多走浏览器缓存。
+// 用 requestIdleCallback 让出主线程，不和建墙/首帧抢资源。
+{
+  const coverUrls = TRACKS.map(t => t.alPicUrl);
+  const kick = () => coverFX.preloadAll(coverUrls);
+  if ('requestIdleCallback' in window) requestIdleCallback(kick, { timeout: 2000 });
+  else setTimeout(kick, 800);
+}
 {
   const pts = [];
   Object.values(ARTISTS).forEach(indices => {
