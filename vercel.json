@@ -2,6 +2,9 @@
   "functions": {
     "api/playlist.js": {
       "maxDuration": 15
+    },
+    "api/lyric.js": {
+      "maxDuration": 10
     }
   }
 }
