@@ -757,28 +757,12 @@ const FOG_COLOR = 0x050508;
 // ─────────────────────────────────────────────────────────────
 const USE_DOF = false;   // ← 改这里：true = 真 BokehDOF，false = 关闭
 
-// Artist cluster 3D centers
-const CLUSTER = {
-  'Coldplay':        { x:-14, y: 2, z:-18 },
-  'Muse':            { x: 12, y:-3, z:-14 },
-  'Travis':          { x: -7, y: 4, z:-34 },
-  'Stereophonics':   { x: 16, y: 2, z:-26 },
-  'Snow Patrol':     { x:-20, y:-2, z:-12 },
-  'Keane':           { x:  4, y: 4, z:-50 },
-  'Oasis':           { x:-18, y: 0, z:-40 },
-  'The Libertines':  { x: 18, y:-3, z:-30 },
-  'Elbow':           { x:-6, y:-3, z:-55 },
-  'Starsailor':      { x: 19, y: 3, z:-46 },
-  'Athlete':         { x:-16, y: 2, z:-60 },
-  'Doves':           { x:  7, y:-6, z:-22 },
-  'Rialto':          { x:-13, y: 4, z:-46 },
-  'Aqualung':        { x: 14, y: 0, z:-60 },
-  'Mansun':          { x: -3, y:-4, z:-70 },
-  'The Verve':       { x: 7, y: 2, z:-78 },
-  'Haven':           { x:-10, y:-2, z:-74 },
-  'JJ72':            { x: 18, y:-3, z:-54 },
-  'Thirteen Senses': { x:-6, y: 4, z:-64 },
-};
+// Artist cluster 3D centers.
+// 旧版英伦摇滚的硬编码星座坐标已删除 —— 现在改为「按当前歌单的艺人列表
+// 自动模拟生成星座」。真正的 CLUSTER 在下方 ARTISTS 建立后由
+// buildConstellation() 填充（见 seededRnd / ARTISTS 之后）。
+// 这里先留空对象，供后续填充；任何上传的新歌单都会生成属于自己的星座。
+const CLUSTER = {};
 
 // ═══════════════════════════════════════════════════════════
 // THREE.JS SETUP
@@ -1140,10 +1124,59 @@ TRACKS.forEach((t,i) => {
   ARTISTS[ar].push(i);
 });
 
-function clusterOf(name, seed) {
+// ═══════════════════════════════════════════════════════════
+// AUTO CONSTELLATION（Task 2）
+// ───────────────────────────────────────────────────────────
+// 不再依赖任何硬编码艺人坐标。每当 TRACKS 变化（包括上传新歌单后
+// reload），就根据「当前歌单实际出现的艺人列表」确定性地模拟生成
+// 一套星座坐标，写入 CLUSTER。
+//   · 确定性：用艺人名做字符串哈希当种子 → 同一歌单每次刷新星座一致，
+//     不会每帧乱跳；不同歌单自然得到不同星座。
+//   · 分布：黄金角螺旋 + 按序推远 Z，artist 越多铺得越深，天然不挤成一团。
+//   · 健壮：艺人数 1 首也有坐标；空歌单不报错。
+// ═══════════════════════════════════════════════════════════
+function strSeed(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h & 0x7fffffff);
+}
+
+function buildConstellation() {
+  // 清空（reload 后 CLUSTER 是新的空对象，这里幂等保险）
+  for (const k of Object.keys(CLUSTER)) delete CLUSTER[k];
+
+  const names = Object.keys(ARTISTS);
+  const n = Math.max(1, names.length);
+  const GOLDEN = 2.39996323;           // 黄金角，避免艺人簇彼此对齐
+  const Z_START = -14, Z_SPAN = 66;    // 簇中心 Z 铺开范围（近 -14 → 远 -80）
+
+  names.forEach((name, i) => {
+    const s = strSeed(name);
+    // 螺旋角度：序号驱动主结构 + 名字哈希做个性扰动
+    const ang = i * GOLDEN + (seededRnd(s) - 0.5) * 0.6;
+    // 半径随序号缓增，外圈艺人离中心更远；再叠加哈希扰动
+    const rad = 8 + (i / n) * 16 + (seededRnd(s * 3) - 0.5) * 4;
+    // Z 按序推远，artist 多则铺得深；叠加哈希扰动避免成同心圆盘
+    const z = Z_START - (i / n) * Z_SPAN - (seededRnd(s * 7)) * 6;
+    const y = (seededRnd(s * 11) - 0.5) * 14;   // 上下散开，形成立体星座
+    CLUSTER[name] = {
+      x: +(Math.cos(ang) * rad).toFixed(2),
+      y: +y.toFixed(2),
+      z: +z.toFixed(2),
+    };
+  });
+}
+buildConstellation();
+
+function clusterOf(name) {
+  // 正常情况下 buildConstellation 已为每个艺人建好坐标；
+  // 万一遇到未登记艺人（理论上不会），用名字哈希现算一个兜底坐标。
   if (CLUSTER[name]) return CLUSTER[name];
-  const a = seed * 2.399;
-  return { x: Math.cos(a)*18, y: (seededRnd(seed*77)-0.5)*10, z: -(seededRnd(seed*99)*55+20) };
+  const s = strSeed(name || 'unknown');
+  const a = s * 2.399;
+  const c = { x: Math.cos(a) * 18, y: (seededRnd(s * 77) - 0.5) * 10, z: -(seededRnd(s * 99) * 55 + 20) };
+  CLUSTER[name] = c;
+  return c;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1206,8 +1239,7 @@ setTimeout(hideLoading, 8000);
 
 TRACKS.forEach((track, i) => {
   const ar = track.ar[0];
-  const arIdx = Object.keys(ARTISTS).indexOf(ar);
-  const ctr = clusterOf(ar, arIdx);
+  const ctr = clusterOf(ar);
 
   // Depth-based scale: near=large, far=small
   const df = Math.max(0, Math.min(1, (ctr.z - Z_FAR_REF) / (Z_NEAR_REF - Z_FAR_REF)));
@@ -1254,6 +1286,66 @@ TRACKS.forEach((track, i) => {
     () => onProgress()
   );
 });
+
+// ═══════════════════════════════════════════════════════════
+// CARD COLLISION / 去重叠（Task 3）
+// ───────────────────────────────────────────────────────────
+// 不引入实时刚体物理（卡片是始终正对相机的 billboard 平面，跑物理引擎
+// 是杀鸡用牛刀，还会拖帧）。改用「一次性松弛 (relaxation) 排斥」：
+//   · 把每张卡近似成一个球，半径 = 卡片缩放后的半对角线 + 余量；
+//     因为卡片永远正对相机，球近似就是最坏情况下的精确包围体。
+//   · 多轮迭代：任意两卡球心距 < 半径之和，就沿连线把两者对半推开；
+//     推开量留一点松弛系数，避免抖动。
+//   · 余量额外吃掉「呼吸漂浮」的振幅(ampX/ampY≈0.4)，保证运行时漂浮
+//     也不会再嵌进彼此。
+//   · 只在建墙时跑一次，运行时零开销；之后 cardBase 快照记录的就是
+//     这套去重叠后的坐标。
+// ═══════════════════════════════════════════════════════════
+(function relaxCardOverlap() {
+  const N = meshes.length;
+  if (N < 2) return;
+
+  const BREATH_MARGIN = 0.5;     // 吃掉呼吸漂浮振幅 + 一点视觉间距
+  const HALF_DIAG = Math.SQRT2 * 0.5 * BASE_CARD;  // 单位卡半对角线
+  // 每张卡的碰撞半径（含缩放与余量）
+  const rad = meshes.map(m => HALF_DIAG * m.userData.baseScale + BREATH_MARGIN);
+
+  const ITER = 14;               // 迭代轮数：够收敛，又不至于太慢
+  const PUSH = 0.5;              // 每次把重叠量推开的比例（双方各推一半）
+  const v = new THREE.Vector3();
+
+  for (let iter = 0; iter < ITER; iter++) {
+    let moved = false;
+    for (let i = 0; i < N; i++) {
+      const pi = meshes[i].position, ri = rad[i];
+      for (let j = i + 1; j < N; j++) {
+        const pj = meshes[j].position, rj = rad[j];
+        const minD = ri + rj;
+        // 先用 AABB 粗筛，省掉大量开方
+        const dx = pj.x - pi.x, dy = pj.y - pi.y, dz = pj.z - pi.z;
+        if (Math.abs(dx) > minD || Math.abs(dy) > minD || Math.abs(dz) > minD) continue;
+        let d2 = dx*dx + dy*dy + dz*dz;
+        if (d2 >= minD * minD) continue;            // 没重叠
+        let d = Math.sqrt(d2);
+        if (d < 1e-4) {                              // 完全重合：给个确定性微扰
+          v.set(seededRnd(i*31+j)-0.5, seededRnd(i*37+j)-0.5, seededRnd(i*41+j)-0.5);
+          if (v.lengthSq() < 1e-6) v.set(1, 0, 0);
+          v.normalize();
+          d = 1e-4;
+        } else {
+          v.set(dx/d, dy/d, dz/d);
+        }
+        const overlap = (minD - d) * PUSH;
+        // 大卡更重、推得少；小卡推得多（按半径反比分摊），整体更稳
+        const wi = rj / minD, wj = ri / minD;
+        pi.x -= v.x * overlap * wi; pi.y -= v.y * overlap * wi; pi.z -= v.z * overlap * wi;
+        pj.x += v.x * overlap * wj; pj.y += v.y * overlap * wj; pj.z += v.z * overlap * wj;
+        moved = true;
+      }
+    }
+    if (!moved) break;            // 提前收敛
+  }
+})();
 
 // 封面碎片动效预加载(#5 优化)：载墙后台静默预解码所有封面，
 // 选中时直接命中缓存、零等待。与上面 TextureLoader 同 URL，多走浏览器缓存。
