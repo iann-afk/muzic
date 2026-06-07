@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Muzic · 让音乐漂浮起来</title>
+<title>Muzic — Where Music Floats</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #050508; cursor: grab; }
@@ -24,8 +24,7 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 12px; color: rgba(255,255,255,0.7); }
   .ht-title { font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.82); letter-spacing: .02em; }
-  .ht-tag { font-size: 9px; color: rgba(255,255,255,0.5); margin-top: 2px; letter-spacing: .04em; }
-  .ht-sub { font-size: 10px; color: rgba(255,255,255,0.35); margin-top: 2px; letter-spacing: .03em; }
+  .ht-tag-inline { font-weight: 400; color: rgba(255,255,255,0.45); letter-spacing: .03em; }
 
   /* ── HUD top-right legend ── */
   #hud-tr {
@@ -298,6 +297,13 @@
   .intro-p a { color: #6ab3ff; text-decoration: none; }
   .intro-p a:hover { text-decoration: underline; }
   .intro-p code { background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .intro-steps { display: flex; flex-direction: column; gap: 12px; margin: 14px 0 16px; }
+  .intro-step { display: flex; align-items: flex-start; gap: 11px; font-size: 13px;
+    line-height: 1.5; color: rgba(255,255,255,0.72); }
+  .intro-step b { color: rgba(255,255,255,0.95); font-weight: 600; }
+  .intro-step .is-ic { flex-shrink: 0; width: 26px; height: 26px; border-radius: 8px;
+    background: rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center;
+    font-size: 14px; margin-top: 1px; }
   .intro-det { font-size: 13px; margin-bottom: 16px; }
   .intro-det summary { cursor: pointer; color: rgba(255,255,255,0.6); padding: 4px 0; }
   .intro-det summary:hover { color: rgba(255,255,255,0.85); }
@@ -350,6 +356,17 @@
     border: none; color: rgba(255,255,255,0.6); font-size: 13px; cursor: pointer;
     display: flex; align-items: center; justify-content: center; transition: background .12s, color .12s; }
   #pp-share:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  /* 全局轻提示（分享复制等反馈） */
+  #app-toast {
+    position: fixed; left: 50%; top: 28px; transform: translateX(-50%) translateY(-12px);
+    background: rgba(20,20,28,0.92); backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.16); color: rgba(255,255,255,0.92);
+    font-family: -apple-system, sans-serif; font-size: 12.5px; letter-spacing: .02em;
+    padding: 10px 18px; border-radius: 12px; z-index: 600;
+    opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s;
+    max-width: 80vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .pp-pane { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
   .pp-pane[hidden] { display: none; }
   #pp-cur-name { padding: 11px 14px 7px; font-size: 12px; font-weight: 600;
@@ -498,11 +515,8 @@
 
 <!-- HUD top-left -->
 <div id="hud-tl">
-  <div class="ht-logo">⌾</div>
   <div>
-    <div class="ht-title">Muzic</div>
-    <div class="ht-tag">Where music floats · 让音乐漂浮起来</div>
-    <div class="ht-sub" id="ht-sub">78 首 · 治愈纯音乐</div>
+    <div class="ht-title">Muzic <span class="ht-tag-inline">— Where Music Floats</span></div>
   </div>
 </div>
 
@@ -652,6 +666,21 @@
 <div id="loading">
   <div id="ld-label">加载封面中… 0 / 78</div>
   <div id="ld-track"><div id="ld-fill"></div></div>
+</div>
+
+<!-- 首次访问引导浮层（仅新用户出现一次） -->
+<div id="intro-overlay" class="hidden" style="display:none;">
+  <div id="intro-box">
+    <div id="intro-title">欢迎来到 Muzic ✦</div>
+    <p class="intro-p">这是一面漂浮在星海里的专辑封面墙。三步就能玩起来：</p>
+    <div class="intro-steps">
+      <div class="intro-step"><span class="is-ic">🖐️</span><div><b>拖拽</b>空白处，在星海中自由漫游；滚轮缩放远近。</div></div>
+      <div class="intro-step"><span class="is-ic">▶️</span><div><b>点击任意封面</b>，聚焦并播放这首；点艺人名可随机播放该艺人。</div></div>
+      <div class="intro-step"><span class="is-ic">＋</span><div>左下角头像 → <b>换歌单</b>，粘贴网易云歌单链接，换成你自己的墙。</div></div>
+    </div>
+    <p class="intro-p" style="opacity:.6; font-size:12px;">提示：闲置一会儿会自动进入「氛围模式」自动巡游 ✦，动一下即唤醒。</p>
+    <button id="intro-close">开始探索</button>
+  </div>
 </div>
 
 <!-- Three.js r128 + post-processing (load order matters) -->
@@ -1216,15 +1245,17 @@ function buildConstellation() {
   const n = Math.max(1, names.length);
   const GOLDEN = 2.39996323;           // 黄金角，避免艺人簇彼此对齐
 
-  // 艺人越多，整体铺得越开（半径/纵深/上下都按数量放大），
-  // 否则几十个艺人挤在小半径里、投影到屏幕会糊成一团。
-  // n≈10 → 适中；n≈44(默认治愈墙) → 明显铺开。
-  const spread = Math.min(2.2, 0.8 + n / 30);   // 0.8 → 2.2 的放大系数
-  const RAD_BASE = 10 * spread;
-  const RAD_GROW = 26 * spread;        // 外圈艺人离中心更远
+  // 铺开系数随「歌曲总数」自适应，而不是只看艺人数——真正决定密度的是
+  // 卡片总量。歌少时整体收紧（半径/纵深/上下都缩），让稀疏的卡片聚成一团、
+  // 画面饱满；歌多时放开，避免糊成一坨。
+  // songs≈20 → 紧凑；songs≈78 → 充分铺开。
+  const songCount = (typeof TRACKS !== 'undefined' && TRACKS.length) ? TRACKS.length : n;
+  const spread = Math.max(0.55, Math.min(2.2, 0.55 + songCount / 55));
+  const RAD_BASE = 9 * spread;
+  const RAD_GROW = 24 * spread;        // 外圈艺人离中心更远
   const Z_START  = -14;
-  const Z_SPAN   = 70 * spread;        // 纵深也随数量拉长
-  const Y_SPREAD = 16 * spread;        // 上下散开幅度
+  const Z_SPAN   = 60 * spread;        // 纵深随数量拉长（歌少→浅，不发空）
+  const Y_SPREAD = 15 * spread;        // 上下散开幅度
 
   names.forEach((name, i) => {
     const s = strSeed(name);
@@ -1307,9 +1338,37 @@ function hideLoading() {
   el.style.opacity = '0';
   el.style.pointerEvents = 'none';
   setTimeout(() => { el.style.display = 'none'; }, 900);
-  // #2 新用户引导：首屏自动展开歌单，让用户看到入口；选歌或关闭后即收起，不再自动弹
-  setTimeout(() => { if (typeof togglePlaylist === 'function') togglePlaylist(true); }, 1100);
+  // 首次访问引导：新用户弹引导浮层；老用户（已看过）才走"自动展开歌单"。
+  setTimeout(() => { maybeShowIntro(); }, 1000);
 }
+
+// ── 首次访问引导（localStorage 标记，只弹一次）──
+const INTRO_KEY = 'muzic_intro_seen_v1';
+let _introOpen = false;
+function maybeShowIntro() {
+  let seen = false;
+  try { seen = !!localStorage.getItem(INTRO_KEY); } catch {}
+  if (seen) {
+    // 老用户：保持原行为，轻轻展开歌单让其看到入口
+    if (typeof togglePlaylist === 'function') togglePlaylist(true);
+    return;
+  }
+  const ov = document.getElementById('intro-overlay');
+  if (!ov) return;
+  _introOpen = true;
+  ov.style.display = 'flex';
+  requestAnimationFrame(() => ov.classList.remove('hidden'));  // 触发淡入
+}
+function closeIntro() {
+  const ov = document.getElementById('intro-overlay');
+  if (!ov) return;
+  ov.classList.add('hidden');
+  setTimeout(() => { ov.style.display = 'none'; }, 400);
+  _introOpen = false;
+  try { localStorage.setItem(INTRO_KEY, '1'); } catch {}
+  _lastActivity = performance.now();   // 关引导后重新计空闲，避免立刻进氛围
+}
+document.getElementById('intro-close')?.addEventListener('click', closeIntro);
 // 兜底：即便有封面 403/卡死导致计数到不了 78，最多 8 秒后也强制收起，
 // 保证浮层永不挡住交互（网易云防盗链在正式域名下偶发卡 onload）。
 setTimeout(hideLoading, 8000);
@@ -1423,6 +1482,40 @@ TRACKS.forEach((track, i) => {
     if (!moved) break;            // 提前收敛
   }
 })();
+
+// ═══════════════════════════════════════════════════════════
+// 自适应相机边界（修复小歌单页面发空）
+// ───────────────────────────────────────────────────────────
+// 之前相机漫游边界是写死的常量（X±40 / Y±22 / Z -68..14），不论 20 首
+// 还是 78 首都一样大。歌少时卡云只占中间一小块，四周全是空——所以发空。
+// 这里改成：建墙后量出卡片云的真实包围盒，按它 + 余量推导漫游边界和初始
+// 机位。歌少→边界自动收紧，看不到空旷处；歌多→边界自动放开。
+// ═══════════════════════════════════════════════════════════
+const WALL = (function computeWallBounds() {
+  if (!meshes.length) {
+    return { minX:-40,maxX:40, minY:-22,maxY:22, minZ:-68,maxZ:14, cx:0,cy:8,cz:5 };
+  }
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
+  meshes.forEach(m => {
+    const p = m.position;
+    if (p.x<minX)minX=p.x; if (p.x>maxX)maxX=p.x;
+    if (p.y<minY)minY=p.y; if (p.y>maxY)maxY=p.y;
+    if (p.z<minZ)minZ=p.z; if (p.z>maxZ)maxZ=p.z;
+  });
+  // 中心
+  const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+  return { minX,maxX, minY,maxY, minZ,maxZ, cx, cy, cz: maxZ + 18 };
+})();
+
+// 漫游边界：包围盒 + 余量；下限保证太小的墙也有最低限度的活动范围
+const ROAM = {
+  X: Math.max(14, (WALL.maxX - WALL.minX) / 2 + 8),
+  Y: Math.max(10, (WALL.maxY - WALL.minY) / 2 + 6),
+  Zmin: WALL.minZ - 6,                       // 最远（不让相机穿到墙后空旷处）
+  Zmax: WALL.maxZ + 22,                      // 最近（留出迎面看墙的距离）
+  cx: WALL.cx,
+  cy: WALL.cy,
+};
 
 // 封面碎片动效预加载(#5 优化)：载墙后台静默预解码所有封面，
 // 选中时直接命中缓存、零等待。与上面 TextureLoader 同 URL，多走浏览器缓存。
@@ -1540,7 +1633,7 @@ function updateLabels() {
 // ═══════════════════════════════════════════════════════════
 // CAMERA CONTROL
 // ═══════════════════════════════════════════════════════════
-let camX = 0, camY = 8, camZ = 5;
+let camX = ROAM.cx, camY = ROAM.cy + 2, camZ = WALL.cz;
 let velX = 0, velY = 0;
 let dragging = false, lastMX = 0, lastMY = 0;
 let flyTarget = null;
@@ -1590,10 +1683,12 @@ document.addEventListener('wheel', e => {
 // ═══════════════════════════════════════════════════════════
 function updateDepth() {
   const cx = camX, cy = camY, cz = camZ;
+  // 距离暗化（伪景深）：抬高最暗下限 + 拉长衰减距离，让远处封面仍隐约可见，
+  // 屏保巡游时整面墙更饱满，不至于只剩近处几张 + 一片黑。
   for (let i = 0; i < meshes.length; i++) {
     const m = meshes[i];
     const d = Math.sqrt((m.position.x-cx)**2+(m.position.y-cy)**2+(m.position.z-cz)**2);
-    m.material.color.setScalar(Math.max(0.07, 1.0 - d/80));
+    m.material.color.setScalar(Math.max(0.18, 1.0 - d/95));
   }
 }
 
@@ -2088,7 +2183,7 @@ function prevIdx(from) {
 // 这些元素都在主脚本标签之前，可在顶层直接绑定。
 // ═══════════════════════════════════════════════════════════
 function recenter() {
-  flyTarget = { x: 0, y: 8, z: 5 };
+  flyTarget = { x: ROAM.cx, y: ROAM.cy + 2, z: WALL.cz };
 }
 // #2 工具条
 document.getElementById('pb-shuffle')?.addEventListener('click', (e) => {
@@ -2345,19 +2440,43 @@ ppUrl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPlaylistF
 })();
 
 // 复制当前墙的分享链接到剪贴板
+function showToast(txt) {
+  let el = document.getElementById('app-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'app-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = txt;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
 function copyShareLink() {
   const id = currentPlaylistId();
   const url = `${location.origin}${location.pathname}?playlist=${encodeURIComponent(id)}`;
-  const done = () => setMsg('分享链接已复制 ✓', 'ok');
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(url).then(done).catch(() => {
-      setMsg('复制失败，链接：' + url, 'err');
-    });
+  const ok = () => showToast('分享链接已复制 ✓');
+  const fallback = () => {
+    // 退路：选中一个临时输入框再 execCommand 复制（老浏览器 / 非安全上下文）
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      const done = document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast(done ? '分享链接已复制 ✓' : '链接：' + url);
+    } catch {
+      showToast('链接：' + url);
+    }
+  };
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(ok).catch(fallback);
   } else {
-    setMsg('链接：' + url, 'ok');
+    fallback();
   }
 }
-document.getElementById('pp-share')?.addEventListener('click', copyShareLink);
+document.getElementById('pp-share')?.addEventListener('click', (e) => { e.stopPropagation(); copyShareLink(); });
 
 
 // ═══════════════════════════════════════════════════════════
@@ -2366,8 +2485,11 @@ document.getElementById('pp-share')?.addEventListener('click', copyShareLink);
 const raycaster = new THREE.Raycaster();
 const pointer   = new THREE.Vector2();
 let mdX = 0, mdY = 0;
-document.addEventListener('mousedown', e => { mdX = e.clientX; mdY = e.clientY; });
+let _wasAmbientAtDown = false;
+document.addEventListener('mousedown', e => { mdX = e.clientX; mdY = e.clientY; _wasAmbientAtDown = ambientMode; });
 document.addEventListener('mouseup', e => {
+  // 氛围模式下的点击仅用于退出屏保，不应顺手选中下面的卡片
+  if (_wasAmbientAtDown) { _wasAmbientAtDown = false; return; }
   if (e.target.closest('#focus-card') || e.target.closest('#toolbar') || e.target.closest('#player-bar') || e.target.closest('#playlist-panel') || e.target.closest('#hud-user') || e.target.closest('#lyrics-panel')) return;
   if (Math.hypot(e.clientX-mdX, e.clientY-mdY) > 6) return;
   pointer.x =  (e.clientX/window.innerWidth)*2 - 1;
@@ -2530,14 +2652,13 @@ let _lastActivity = performance.now();
 const ambientNowEl = document.getElementById('ambient-now');
 
 function _ambPickWaypoint() {
-  // 从卡片里随机挑一张当落点，相机停在它前方一点，迎面看封面墙
-  if (!meshes.length) { _ambWaypoint = { x: 0, y: 8, z: 5 }; return; }
-  const m = meshes[Math.floor(Math.random() * meshes.length)];
-  const p = m.position;
+  // 屏保的核心是让路过的人看到「封面墙」，不是空星空。
+  // 落点跟随自适应墙范围（ROAM）：在墙前沿横向/上下游走，待在亮区，
+  // 卡片永远在镜头前方且不会钻进墙后空旷处。歌少时巡游范围自动收紧。
   _ambWaypoint = {
-    x: p.x + (Math.random() - 0.5) * 10,
-    y: p.y + 4 + (Math.random() - 0.5) * 6,
-    z: p.z + 16 + Math.random() * 8,    // 停在卡前方
+    x: ROAM.cx + (Math.random() - 0.5) * ROAM.X * 1.4,
+    y: ROAM.cy + (Math.random() - 0.5) * ROAM.Y * 1.2,
+    z: ROAM.Zmax - 4 - Math.random() * 10,   // 待在最近的亮区前沿
   };
 }
 
@@ -2545,15 +2666,15 @@ function updateAmbientCruise(t) {
   const now = performance.now();
   if (!_ambWaypoint || now >= _ambNextHop) {
     _ambPickWaypoint();
-    _ambNextHop = now + 9000 + Math.random() * 5000;   // 每 9–14s 换落点
+    _ambNextHop = now + 11000 + Math.random() * 6000;   // 每 11–17s 换落点，更舒缓
   }
-  // 缓慢逼近落点（比普通 flyTarget 更慢，更电影感）
-  camX += (_ambWaypoint.x - camX) * 0.012;
-  camY += (_ambWaypoint.y - camY) * 0.012;
-  camZ += (_ambWaypoint.z - camZ) * 0.012;
+  // 缓慢逼近落点（电影感）
+  camX += (_ambWaypoint.x - camX) * 0.010;
+  camY += (_ambWaypoint.y - camY) * 0.010;
+  camZ += (_ambWaypoint.z - camZ) * 0.010;
   // 轻微正弦漂移，避免完全静止
-  camX += Math.sin(t * 0.13) * 0.015;
-  camY += Math.cos(t * 0.11) * 0.012;
+  camX += Math.sin(t * 0.13) * 0.020;
+  camY += Math.cos(t * 0.11) * 0.016;
 }
 
 function updateAmbientNow() {
@@ -2577,6 +2698,13 @@ function enterAmbient() {
   togglePlaylist(false);
   flyTarget = null;
   _ambWaypoint = null; _ambNextHop = 0;
+  // 请求浏览器全屏，真正覆盖整屏（用户手势触发的进入才会成功；
+  // 空闲自动进入时浏览器可能拒绝全屏，但 HUD 仍隐藏、巡游照常）
+  try {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } catch {}
   // 没在播就开一首（随机，避免总从第一首）
   if (!isPlaying) {
     const start = currentTrackIdx >= 0 ? currentTrackIdx
@@ -2595,6 +2723,11 @@ function exitAmbient() {
   ambientMode = false;
   document.body.classList.remove('ambient');
   if (ambientNowEl) ambientNowEl.classList.remove('show');
+  // 退出全屏
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+  } catch {}
   // 音乐继续放；相机停在当前位置，交还用户控制
   flyTarget = null;
 }
@@ -2602,17 +2735,27 @@ function exitAmbient() {
 function toggleAmbient() { ambientMode ? exitAmbient() : enterAmbient(); }
 document.getElementById('tb-ambient')?.addEventListener('click', toggleAmbient);
 
-// 活动检测：任何输入都刷新计时；若在氛围模式则退出
-function _markActivity() {
+// 退出触发：明确的「主动操作」才退（点击 / 按键 / 触摸）——
+// 不再用 mousemove 退出，否则鼠标轻轻一动就退，像假屏保。
+// mousemove 只刷新空闲计时（不退出），让纯看屏保的人不被打断。
+function _markActivity() { _lastActivity = performance.now(); }
+function _exitOnAction() {
   _lastActivity = performance.now();
   if (ambientMode) exitAmbient();
 }
-['mousemove', 'mousedown', 'wheel', 'keydown', 'touchstart'].forEach(ev =>
-  window.addEventListener(ev, _markActivity, { passive: true }));
+window.addEventListener('mousemove', _markActivity, { passive: true });
+['mousedown', 'wheel', 'keydown', 'touchstart'].forEach(ev =>
+  window.addEventListener(ev, _exitOnAction, { passive: true }));
+
+// 浏览器全屏被用户用 Esc/F11 退出时，同步退出氛围模式，避免状态不一致
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && ambientMode) exitAmbient();
+});
 
 // 空闲自动进入：每 2s 检查一次（不打扰主渲染循环）
 setInterval(() => {
   if (ambientMode) return;
+  if (typeof _introOpen !== 'undefined' && _introOpen) { _lastActivity = performance.now(); return; }  // 引导浮层开着时不进氛围
   if (focusMode) { _lastActivity = performance.now(); return; }  // 正看焦点卡不打扰
   if (performance.now() - _lastActivity >= IDLE_MS) enterAmbient();
 }, 2000);
@@ -2650,15 +2793,16 @@ function animate() {
   }
 
   // ── 软边界宇宙：越界橡皮筋回弹，永不黑边、永不过近变糊 ──
-  const Z_MIN = -68, Z_MAX = 14;     // 近/远边界（防糊近界 + 防空旷远界）
-  const X_LIM = 40, Y_LIM = 22;      // 拖拽边界
+  // 边界跟随卡片云自适应（见 ROAM）：X/Y 以墙中心为基准、按云尺寸放开；
+  // Z 限制在卡云纵深 + 余量内，歌少时自动收紧、看不到空旷。
+  const Z_MIN = ROAM.Zmin, Z_MAX = ROAM.Zmax;
   const PULL = 0.08;                 // 回弹力度
   if (camZ < Z_MIN) camZ += (Z_MIN - camZ) * PULL;
   if (camZ > Z_MAX) camZ += (Z_MAX - camZ) * PULL;
-  if (camX < -X_LIM) camX += (-X_LIM - camX) * PULL;
-  if (camX >  X_LIM) camX += ( X_LIM - camX) * PULL;
-  if (camY < -Y_LIM) camY += (-Y_LIM - camY) * PULL;
-  if (camY >  Y_LIM) camY += ( Y_LIM - camY) * PULL;
+  if (camX < ROAM.cx - ROAM.X) camX += (ROAM.cx - ROAM.X - camX) * PULL;
+  if (camX > ROAM.cx + ROAM.X) camX += (ROAM.cx + ROAM.X - camX) * PULL;
+  if (camY < ROAM.cy - ROAM.Y) camY += (ROAM.cy - ROAM.Y - camY) * PULL;
+  if (camY > ROAM.cy + ROAM.Y) camY += (ROAM.cy + ROAM.Y - camY) * PULL;
 
   applyCamera();
   updateDepth();
