@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Infinite Canvas · 治愈系歌单</title>
+<title>Muzic · 让音乐漂浮起来</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #050508; cursor: grab; }
@@ -24,6 +24,7 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 12px; color: rgba(255,255,255,0.7); }
   .ht-title { font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.82); letter-spacing: .02em; }
+  .ht-tag { font-size: 9px; color: rgba(255,255,255,0.5); margin-top: 2px; letter-spacing: .04em; }
   .ht-sub { font-size: 10px; color: rgba(255,255,255,0.35); margin-top: 2px; letter-spacing: .03em; }
 
   /* ── HUD top-right legend ── */
@@ -82,11 +83,45 @@
     border-radius: 50%; transition: background .12s, color .12s;
   }
   .tb-btn:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); }
+  .tb-btn.active { color: rgba(120,200,255,0.95); background: rgba(120,200,255,0.12); }
   .tb-sep { width: 1px; height: 18px; background: rgba(255,255,255,0.12); }
   #tb-label { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: .02em; padding: 0 4px; }
   .tb-vol { display: flex; align-items: center; gap: 8px; }
   .tb-vol-icon { font-size: 13px; color: rgba(255,255,255,0.4); }
   #vol-slider { width: 70px; height: 3px; cursor: pointer; accent-color: rgba(255,255,255,0.6); }
+
+  /* ── 氛围模式（屏保 / 自动巡游）：隐藏所有 HUD，只留星海+封面墙+音乐 ── */
+  body.ambient #hud-tl,
+  body.ambient #hud-tr,
+  body.ambient #hud-user,
+  body.ambient #toolbar,
+  body.ambient #crosshair,
+  body.ambient #artist-labels,
+  body.ambient #player-bar,
+  body.ambient #playlist-panel,
+  body.ambient #lyrics-panel,
+  body.ambient #focus-card {
+    opacity: 0 !important; pointer-events: none !important;
+    transition: opacity .8s ease;
+  }
+  body.ambient { cursor: none; }
+  #ambient-hint {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    font-family: -apple-system, sans-serif; font-size: 11px; letter-spacing: .08em;
+    color: rgba(255,255,255,0.35); z-index: 60; pointer-events: none;
+    opacity: 0; transition: opacity .6s; text-transform: uppercase;
+  }
+  body.ambient #ambient-hint { opacity: 1; animation: amb-hint-fade 4s ease forwards; }
+  @keyframes amb-hint-fade { 0%{opacity:0;} 15%{opacity:.6;} 70%{opacity:.6;} 100%{opacity:0;} }
+  /* 氛围模式下当前曲名字幕，淡入淡出 */
+  #ambient-now {
+    position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
+    font-family: -apple-system, sans-serif; text-align: center; z-index: 60;
+    pointer-events: none; opacity: 0; transition: opacity 1s;
+  }
+  body.ambient #ambient-now.show { opacity: 1; }
+  #ambient-now .an-title { font-size: 15px; color: rgba(255,255,255,0.92); font-weight: 600; }
+  #ambient-now .an-artist { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 3px; letter-spacing: .04em; }
 
   /* ── Bottom-left user (persistent) ── */
   #hud-user {
@@ -228,6 +263,11 @@
   }
   .pb-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
   #pb-play { width: 36px; height: 36px; font-size: 18px; color: #fff; }
+  /* 模式按钮（随机/循环）：移入播放器，比走带键略小略暗，优先级让位给播放键 */
+  .pb-mode { width: 28px; height: 28px; font-size: 13px; color: rgba(255,255,255,0.42); }
+  .pb-mode.active { color: rgba(120,200,255,0.95);
+    background: rgba(120,200,255,0.12); }
+  .pb-mode-sep { width: 1px; height: 16px; background: rgba(255,255,255,0.14); margin: 0 4px; }
 
   /* ── Loading ── */
   #loading { position: fixed; inset: 0; background: #050508; z-index: 500;
@@ -306,6 +346,10 @@
     border: none; color: rgba(255,255,255,0.7); font-size: 14px; cursor: pointer;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   #pp-close:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  #pp-share { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.08);
+    border: none; color: rgba(255,255,255,0.6); font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: background .12s, color .12s; }
+  #pp-share:hover { background: rgba(255,255,255,0.18); color: #fff; }
   .pp-pane { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
   .pp-pane[hidden] { display: none; }
   #pp-cur-name { padding: 11px 14px 7px; font-size: 12px; font-weight: 600;
@@ -456,7 +500,8 @@
 <div id="hud-tl">
   <div class="ht-logo">⌾</div>
   <div>
-    <div class="ht-title">Infinite Canvas</div>
+    <div class="ht-title">Muzic</div>
+    <div class="ht-tag">Where music floats · 让音乐漂浮起来</div>
     <div class="ht-sub" id="ht-sub">78 首 · 治愈纯音乐</div>
   </div>
 </div>
@@ -486,9 +531,8 @@
 
 <!-- Browse-state toolbar -->
 <div id="toolbar">
-  <button class="tb-btn" id="tb-shuffle" title="随机播放">⇄</button>
-  <button class="tb-btn" id="tb-loop" title="循环模式">◎</button>
   <button class="tb-btn" id="tb-center" title="镜头归位">⊕</button>
+  <button class="tb-btn" id="tb-ambient" title="氛围模式（自动巡游）">✦</button>
   <div class="tb-sep"></div>
   <span id="tb-label">点击任意封面开始</span>
   <div class="tb-sep"></div>
@@ -499,6 +543,10 @@
 </div>
 
 <!-- (decade timeline removed — meaningless for instrumental playlist) -->
+
+<!-- 氛围模式叠层：当前曲名字幕 + 退出提示 -->
+<div id="ambient-now"><div class="an-title">—</div><div class="an-artist">—</div></div>
+<div id="ambient-hint">移动鼠标或按任意键退出氛围模式</div>
 
 <!-- User info (click to open playlist) -->
 <div id="hud-user" title="展开歌单">
@@ -517,7 +565,10 @@
       <button class="pp-tab active" data-tab="songs" id="tab-songs">歌曲</button>
       <button class="pp-tab" data-tab="change" id="tab-change">换歌单</button>
     </div>
-    <button id="pp-close" title="收起">×</button>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <button id="pp-share" title="复制分享链接">⤴</button>
+      <button id="pp-close" title="收起">×</button>
+    </div>
   </div>
 
   <!-- TAB 1: 当前歌单名 + 全部歌曲列表 -->
@@ -583,6 +634,9 @@
     <div id="pb-artist">—</div>
   </div>
   <div id="pb-controls">
+    <button class="pb-btn pb-mode" id="pb-shuffle" title="随机播放">⇄</button>
+    <button class="pb-btn pb-mode" id="pb-loop" title="循环模式">◎</button>
+    <div class="pb-mode-sep"></div>
     <button class="pb-btn" id="pb-prev" title="上一首">&#9664;&#9664;</button>
     <button class="pb-btn" id="pb-play" title="播放/暂停">&#9654;</button>
     <button class="pb-btn" id="pb-next" title="下一首">&#9654;&#9654;</button>
@@ -1613,7 +1667,8 @@ const pbProgressFill = document.getElementById('pb-progress-fill');
 const pbCur = document.getElementById('pb-cur');
 const pbDur = document.getElementById('pb-dur');
 let progressTimer = null;
-let playElapsed = 0;          // 本地计时（秒）— 近似，暂停/拖动会漂移
+let playElapsed = 0;          // 已播秒数（由墙钟计算，后台节流也不漂移）
+let _playStartTs = 0;         // 本曲开始播放的时间戳（performance.now，毫秒）
 let curDuration = 240;        // 当前曲时长（秒），有 DURATIONS 用真值否则回退
 const DEFAULT_DURATION = 240;
 
@@ -1624,24 +1679,32 @@ function fmtTime(s) {
   return `${m}:${ss}`;
 }
 
+// 用「墙钟」算已播时间：记下开始时刻，每个 tick 用 now-start 算 elapsed。
+// 关键点：后台标签页会把 setInterval 节流到约每分钟一次，若用「每秒++」
+// 累加会严重落后、到点切不了歌；改成墙钟后，无论后台被节流多久，下一次
+// tick（或切回前台时的 visibilitychange 校准）都能拿到真实 elapsed，
+// 立刻补上该自动切下的歌。音频本身由网易云 iframe 播，后台不停。
+function _tickProgress() {
+  playElapsed = (performance.now() - _playStartTs) / 1000;
+  const pct = Math.min(100, (playElapsed / curDuration) * 100);
+  pbProgressFill.style.width = pct + '%';
+  pbCur.textContent = fmtTime(playElapsed);
+  syncLyrics(playElapsed);
+  if (playElapsed >= curDuration) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+    advanceNext();   // 播完自动切下一首（按 loopMode/shuffle）
+  }
+}
+
 function startProgress() {
   if (progressTimer) clearInterval(progressTimer);
   playElapsed = 0;
+  _playStartTs = performance.now();
   pbProgressFill.style.width = '0%';
   pbCur.textContent = '0:00';
   pbDur.textContent = fmtTime(curDuration);
-  progressTimer = setInterval(() => {
-    playElapsed++;
-    const pct = Math.min(100, (playElapsed / curDuration) * 100);
-    pbProgressFill.style.width = pct + '%';
-    pbCur.textContent = fmtTime(playElapsed);
-    syncLyrics(playElapsed);
-    if (playElapsed >= curDuration) {
-      clearInterval(progressTimer);
-      progressTimer = null;
-      advanceNext();   // 播完自动切下一首（按 loopMode/shuffle）
-    }
-  }, 1000);
+  progressTimer = setInterval(_tickProgress, 1000);
 }
 
 function stopProgress() {
@@ -1649,6 +1712,11 @@ function stopProgress() {
   pbProgressFill.style.width = '0%';
   pbCur.textContent = '0:00';
 }
+
+// 切回前台时立即用墙钟校准一次：若后台期间本该切歌了，这里马上补上。
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && progressTimer && isPlaying) _tickProgress();
+});
 
 function updateScrollTitle(text) {
   pbTitle.classList.remove('scrolling');
@@ -1981,15 +2049,21 @@ function advanceNext() {
   const j = nextIdx(currentTrackIdx);
   if (j < 0) return;   // loop=off 且已到末尾 → 停
   loadTrack(j, true);
-  // 让镜头也飞到下一张卡，视觉跟随
-  const mesh = meshes.find(m => m.userData.track && m.userData.track.id === TRACKS[j].id);
-  if (mesh) {
-    focusedMesh = mesh;
-    const p = mesh.position;
-    flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
+  // 氛围模式：不弹焦点卡，保持纯净巡游画面，只更新字幕
+  if (ambientMode) {
+    focusMode = false; focusCard.classList.remove('on');
+  } else {
+    // 让镜头也飞到下一张卡，视觉跟随
+    const mesh = meshes.find(m => m.userData.track && m.userData.track.id === TRACKS[j].id);
+    if (mesh) {
+      focusedMesh = mesh;
+      const p = mesh.position;
+      flyTarget = { x: camX + (p.x-camX)*0.6, y: camY + (p.y-camY)*0.6, z: Math.max(p.z + 9, camZ - 22) };
+    }
   }
   if (isVip(TRACKS[j])) showVipPop();
   else playCurrent();
+  if (ambientMode && typeof updateAmbientNow === 'function') updateAmbientNow();
 }
 
 // 上一首/下一首：受循环模式影响（loopMode: 'list' | 'one' | 'off'；shuffle 独立）
@@ -2017,18 +2091,26 @@ function recenter() {
   flyTarget = { x: 0, y: 8, z: 5 };
 }
 // #2 工具条
-document.getElementById('tb-shuffle')?.addEventListener('click', (e) => {
+document.getElementById('pb-shuffle')?.addEventListener('click', (e) => {
   shuffleOn = !shuffleOn;
   e.currentTarget.classList.toggle('active', shuffleOn);
   e.currentTarget.title = shuffleOn ? '随机播放：开' : '随机播放：关';
 });
-document.getElementById('tb-loop')?.addEventListener('click', (e) => {
+document.getElementById('pb-loop')?.addEventListener('click', (e) => {
   loopMode = loopMode === 'list' ? 'one' : loopMode === 'one' ? 'off' : 'list';
   e.currentTarget.classList.toggle('active', loopMode !== 'off');
   e.currentTarget.title = loopMode === 'list' ? '循环：列表' : loopMode === 'one' ? '循环：单曲' : '循环：关';
   e.currentTarget.textContent = loopMode === 'one' ? '①' : '◎';
 });
 document.getElementById('tb-center')?.addEventListener('click', recenter);
+
+// 初始化模式按钮的视觉态（loopMode 默认 'list' → 循环键应已点亮）
+(function initModeBtns() {
+  const lb = document.getElementById('pb-loop');
+  if (lb) lb.classList.toggle('active', loopMode !== 'off');
+  const sb = document.getElementById('pb-shuffle');
+  if (sb) sb.classList.toggle('active', shuffleOn);
+})();
 
 // 音量：网易云 embed 跨域不可控音量，这里用 iframe 透明度无意义——
 // 退而用本地静音兜底（embed 自身音量条仍可用）。先保留滑块，绑一个本地占位。
@@ -2243,6 +2325,40 @@ function loadPlaylistById(id) { doLoadPlaylist(String(id)); }
 ppLoad?.addEventListener('click', loadPlaylistFromUrl);
 ppUrl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPlaylistFromUrl(); });
 
+// ── 分享链接 / 深链：?playlist=<网易云歌单id> ──
+// 打开带 ?playlist=ID 的链接，若与当前墙不同就自动载入那个歌单。
+// 由此实现「跨设备 / 发给朋友」——无需登录，URL 即状态。
+(function applyUrlPlaylist() {
+  try {
+    const p = new URLSearchParams(location.search);
+    const want = p.get('playlist');
+    if (!want) return;
+    if (String(want) === String(currentPlaylistId())) return;  // 已是这个墙，避免重载循环
+    if (want === 'default') {
+      localStorage.removeItem(PLAYLIST_CACHE_KEY);
+      setTimeout(() => location.reload(), 200);
+      return;
+    }
+    // 等 UI 就绪后再载（doLoadPlaylist 会写缓存 + reload，落到正确的墙）
+    setTimeout(() => loadPlaylistById(want), 300);
+  } catch {}
+})();
+
+// 复制当前墙的分享链接到剪贴板
+function copyShareLink() {
+  const id = currentPlaylistId();
+  const url = `${location.origin}${location.pathname}?playlist=${encodeURIComponent(id)}`;
+  const done = () => setMsg('分享链接已复制 ✓', 'ok');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(url).then(done).catch(() => {
+      setMsg('复制失败，链接：' + url, 'err');
+    });
+  } else {
+    setMsg('链接：' + url, 'ok');
+  }
+}
+document.getElementById('pp-share')?.addEventListener('click', copyShareLink);
+
 
 // ═══════════════════════════════════════════════════════════
 // RAYCASTER  (selection + hover)
@@ -2397,6 +2513,110 @@ function updateMusicFX(st) {
   glowMat2.opacity = (0.12 + 0.18 * pulse) * _fxPulse;
 }
 
+// ═══════════════════════════════════════════════════════════
+// AMBIENT / 屏保模式：自动巡游 + 连续播放，隐藏所有 HUD
+// ───────────────────────────────────────────────────────────
+// 进入：点工具栏 ✦，或无操作 IDLE_MS 后自动进入。
+// 退出：任何鼠标移动/点击/按键/触摸。
+// 巡游：在卡片之间挑落点，相机缓慢漂过去，掠过封面墙；到点换下一个落点。
+// 音乐：进入时若没在播就从随机一首开始；之后靠 advanceNext 自动续播
+//      （配合墙钟计时，后台/前台都连续）。
+// ═══════════════════════════════════════════════════════════
+let ambientMode = false;
+let _ambWaypoint = null;
+let _ambNextHop = 0;
+const IDLE_MS = 60000;          // 1 分钟无操作 → 自动进入
+let _lastActivity = performance.now();
+const ambientNowEl = document.getElementById('ambient-now');
+
+function _ambPickWaypoint() {
+  // 从卡片里随机挑一张当落点，相机停在它前方一点，迎面看封面墙
+  if (!meshes.length) { _ambWaypoint = { x: 0, y: 8, z: 5 }; return; }
+  const m = meshes[Math.floor(Math.random() * meshes.length)];
+  const p = m.position;
+  _ambWaypoint = {
+    x: p.x + (Math.random() - 0.5) * 10,
+    y: p.y + 4 + (Math.random() - 0.5) * 6,
+    z: p.z + 16 + Math.random() * 8,    // 停在卡前方
+  };
+}
+
+function updateAmbientCruise(t) {
+  const now = performance.now();
+  if (!_ambWaypoint || now >= _ambNextHop) {
+    _ambPickWaypoint();
+    _ambNextHop = now + 9000 + Math.random() * 5000;   // 每 9–14s 换落点
+  }
+  // 缓慢逼近落点（比普通 flyTarget 更慢，更电影感）
+  camX += (_ambWaypoint.x - camX) * 0.012;
+  camY += (_ambWaypoint.y - camY) * 0.012;
+  camZ += (_ambWaypoint.z - camZ) * 0.012;
+  // 轻微正弦漂移，避免完全静止
+  camX += Math.sin(t * 0.13) * 0.015;
+  camY += Math.cos(t * 0.11) * 0.012;
+}
+
+function updateAmbientNow() {
+  if (!ambientNowEl) return;
+  if (ambientMode && currentTrackIdx >= 0) {
+    const tr = TRACKS[currentTrackIdx];
+    ambientNowEl.querySelector('.an-title').textContent = tr.name;
+    ambientNowEl.querySelector('.an-artist').textContent = tr.ar.join(' / ');
+    ambientNowEl.classList.add('show');
+  } else {
+    ambientNowEl.classList.remove('show');
+  }
+}
+
+function enterAmbient() {
+  if (ambientMode) return;
+  ambientMode = true;
+  document.body.classList.add('ambient');
+  // 收掉焦点卡 / 歌单，纯净画面
+  if (focusMode) { focusMode = false; focusCard.classList.remove('on'); }
+  togglePlaylist(false);
+  flyTarget = null;
+  _ambWaypoint = null; _ambNextHop = 0;
+  // 没在播就开一首（随机，避免总从第一首）
+  if (!isPlaying) {
+    const start = currentTrackIdx >= 0 ? currentTrackIdx
+      : Math.floor(Math.random() * TRACKS.length);
+    loadTrack(start, true);
+    // loadTrack 会开焦点卡，氛围模式下再关掉
+    focusMode = false; focusCard.classList.remove('on');
+    if (!isVip(TRACKS[start])) playCurrent();
+    else { const j = nextFreeIdx(start); if (j >= 0) { loadTrack(j, true); focusMode = false; focusCard.classList.remove('on'); playCurrent(); } }
+  }
+  updateAmbientNow();
+}
+
+function exitAmbient() {
+  if (!ambientMode) return;
+  ambientMode = false;
+  document.body.classList.remove('ambient');
+  if (ambientNowEl) ambientNowEl.classList.remove('show');
+  // 音乐继续放；相机停在当前位置，交还用户控制
+  flyTarget = null;
+}
+
+function toggleAmbient() { ambientMode ? exitAmbient() : enterAmbient(); }
+document.getElementById('tb-ambient')?.addEventListener('click', toggleAmbient);
+
+// 活动检测：任何输入都刷新计时；若在氛围模式则退出
+function _markActivity() {
+  _lastActivity = performance.now();
+  if (ambientMode) exitAmbient();
+}
+['mousemove', 'mousedown', 'wheel', 'keydown', 'touchstart'].forEach(ev =>
+  window.addEventListener(ev, _markActivity, { passive: true }));
+
+// 空闲自动进入：每 2s 检查一次（不打扰主渲染循环）
+setInterval(() => {
+  if (ambientMode) return;
+  if (focusMode) { _lastActivity = performance.now(); return; }  // 正看焦点卡不打扰
+  if (performance.now() - _lastActivity >= IDLE_MS) enterAmbient();
+}, 2000);
+
 function animate() {
   requestAnimationFrame(animate);
   const _t = performance.now() * 0.001;
@@ -2412,6 +2632,9 @@ function animate() {
   } else if (fcFx) {
     fcFx.classList.remove('on');
   }
+
+  // 氛围模式：自动巡游相机（在 flyTarget 之外驱动一个缓慢漂移目标）
+  if (ambientMode) updateAmbientCruise(_t);
 
   // Camera fly-to
   if (flyTarget) {
