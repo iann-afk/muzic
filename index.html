@@ -119,6 +119,18 @@
   }
   body.ambient #ambient-hint { opacity: 1; animation: amb-hint-fade 4s ease forwards; }
   @keyframes amb-hint-fade { 0%{opacity:0;} 15%{opacity:.6;} 70%{opacity:.6;} 100%{opacity:0;} }
+  /* 自动进入屏保时的「点击进入全屏」提示（手动进入已是真全屏，不显示） */
+  #ambient-fs-hint {
+    position: fixed; top: 28px; left: 50%; transform: translateX(-50%) translateY(-6px);
+    font-family: -apple-system, sans-serif; font-size: 12px; letter-spacing: .06em;
+    color: rgba(255,255,255,0.7); z-index: 61; cursor: pointer;
+    padding: 8px 18px; border-radius: 999px;
+    background: rgba(20,28,48,0.55); border: 1px solid rgba(255,255,255,0.14);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    opacity: 0; pointer-events: none; transition: opacity .6s, transform .6s, color .3s;
+  }
+  #ambient-fs-hint.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+  #ambient-fs-hint:hover { color: #fff; background: rgba(40,52,84,0.7); }
   /* 氛围模式下当前曲名字幕，淡入淡出 */
   #ambient-now {
     position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
@@ -624,6 +636,7 @@
 <div id="ambient-edge"></div>
 <div id="ambient-now"><div class="an-title">—</div><div class="an-artist">—</div></div>
 <div id="ambient-hint">移动鼠标或按任意键退出氛围模式</div>
+<div id="ambient-fs-hint">⤢ 点击进入全屏</div>
 
 <!-- User info (click to open playlist) -->
 <div id="hud-user" title="展开歌单">
@@ -3536,13 +3549,20 @@ function enterAmbient(manual) {
   _ambTurnVel.set(0, 0, 0);
   _ambInited = false;
   document.body.classList.toggle('ambient-edge', true);  // 启用边缘光晕
-  // 仅手动进入才请求全屏（2.5）；自动进入只隐藏 HUD
+  // 仅手动进入才请求全屏（2.5）；自动进入显示「点击进入全屏」提示（2.5 B 方案）
+  const _fsHintEl = document.getElementById('ambient-fs-hint');
   if (manual) {
+    if (_fsHintEl) _fsHintEl.classList.remove('show');
     try {
       const el = document.documentElement;
       if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
       else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
     } catch {}
+  } else {
+    // 已经是全屏（比如从手动屏保切到自动）就不提示
+    if (_fsHintEl && !document.fullscreenElement && !document.webkitFullscreenElement) {
+      _fsHintEl.classList.add('show');
+    }
   }
   // 保证巡游有音乐：若当前没有在播，随机挑一首「非 VIP」的曲子播放。
   // （之前只在 isPlaying=false 时尝试，且 VIP 边界处理不稳，可能静音进入。）
@@ -3568,6 +3588,7 @@ function exitAmbient() {
   ambientMode = false;
   document.body.classList.remove('ambient');
   document.body.classList.remove('ambient-edge');
+  document.getElementById('ambient-fs-hint')?.classList.remove('show');
   endShowcaseImmediate();
   if (ambientNowEl) ambientNowEl.classList.remove('show');
   try {
@@ -3582,6 +3603,27 @@ document.getElementById('tb-ambient')?.addEventListener('click', toggleAmbient);
 document.getElementById('pb-ambient')?.addEventListener('click', (e) => { e.stopPropagation(); toggleAmbient(); });
 document.getElementById('pb-shot')?.addEventListener('click', (e) => { e.stopPropagation(); captureScreenshot(); });
 
+// 自动进屏保时「点击进入全屏」：此刻有用户手势，浏览器允许全屏
+(function bindFsHint(){
+  const fsHint = document.getElementById('ambient-fs-hint');
+  if (!fsHint) return;
+  // mousedown/touchstart 会被 window 上的 _exitOnAction 监听到并退出屏保，
+  // 这两个比 click 先触发，必须在此阻止冒泡，否则点提示会先退屏保而不是进全屏。
+  fsHint.addEventListener('mousedown', (e) => e.stopPropagation());
+  fsHint.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  fsHint.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch {}
+    fsHint.classList.remove('show');
+    _lastActivity = performance.now();
+  });
+})();
+
 function _markActivity() { _lastActivity = performance.now(); }
 function _exitOnAction() {
   _lastActivity = performance.now();
@@ -3592,6 +3634,7 @@ window.addEventListener('mousemove', _markActivity, { passive: true });
   window.addEventListener(ev, _exitOnAction, { passive: true }));
 
 document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement) document.getElementById('ambient-fs-hint')?.classList.remove('show');
   if (!document.fullscreenElement && ambientMode && _ambManual) exitAmbient();
 });
 
