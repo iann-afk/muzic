@@ -122,16 +122,29 @@
   }
 
   /* ── Artist labels ── */
-  .al { position: fixed; pointer-events: none; transform: translate(-50%,-50%);
+  .al { position: fixed; transform: translate(-50%,-50%);
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-    transition: opacity .4s; }
+    transition: opacity .4s;
+    cursor: pointer; pointer-events: auto;
+    padding: 6px 8px; margin: -6px -8px; border-radius: 8px;
+    background: transparent; }
+  /* 容器本体不吃事件（避免覆盖在卡片上方抢点击），只让文字命中区域可点 */
+  #artist-labels { pointer-events: none; }
+  .al:hover { background: rgba(255,255,255,0.06); }
+  .al:hover .al-name { color: rgba(255,255,255,0.98);
+    text-shadow: 0 0 12px rgba(255,255,255,0.5); }
+  .al:hover .al-dot  { background: rgba(255,255,255,0.95);
+    box-shadow: 0 0 8px rgba(255,255,255,0.7); }
+  .al:hover .al-count { color: rgba(255,255,255,0.6); }
   .al-dot { width: 5px; height: 5px; border-radius: 50%;
-    background: rgba(255,255,255,0.5); margin-bottom: 3px; }
+    background: rgba(255,255,255,0.5); margin-bottom: 3px;
+    transition: background .2s, box-shadow .2s; }
   .al-name { font-size: 8px; font-weight: 700; letter-spacing: .14em;
     color: rgba(255,255,255,0.6); text-transform: uppercase; white-space: nowrap;
-    font-family: -apple-system, sans-serif; }
+    font-family: -apple-system, sans-serif;
+    transition: color .2s, text-shadow .2s; }
   .al-count { font-size: 8px; color: rgba(255,255,255,0.28); white-space: nowrap;
-    font-family: -apple-system, sans-serif; }
+    font-family: -apple-system, sans-serif; transition: color .2s; }
 
   /* ── Focus glass card ── */
   #focus-card {
@@ -1148,17 +1161,27 @@ function buildConstellation() {
   const names = Object.keys(ARTISTS);
   const n = Math.max(1, names.length);
   const GOLDEN = 2.39996323;           // 黄金角，避免艺人簇彼此对齐
-  const Z_START = -14, Z_SPAN = 66;    // 簇中心 Z 铺开范围（近 -14 → 远 -80）
+
+  // 艺人越多，整体铺得越开（半径/纵深/上下都按数量放大），
+  // 否则几十个艺人挤在小半径里、投影到屏幕会糊成一团。
+  // n≈10 → 适中；n≈44(默认治愈墙) → 明显铺开。
+  const spread = Math.min(2.2, 0.8 + n / 30);   // 0.8 → 2.2 的放大系数
+  const RAD_BASE = 10 * spread;
+  const RAD_GROW = 26 * spread;        // 外圈艺人离中心更远
+  const Z_START  = -14;
+  const Z_SPAN   = 70 * spread;        // 纵深也随数量拉长
+  const Y_SPREAD = 16 * spread;        // 上下散开幅度
 
   names.forEach((name, i) => {
     const s = strSeed(name);
+    const t = i / n;                   // 0..1 归一化序号
     // 螺旋角度：序号驱动主结构 + 名字哈希做个性扰动
     const ang = i * GOLDEN + (seededRnd(s) - 0.5) * 0.6;
-    // 半径随序号缓增，外圈艺人离中心更远；再叠加哈希扰动
-    const rad = 8 + (i / n) * 16 + (seededRnd(s * 3) - 0.5) * 4;
+    // 半径随序号缓增（用 sqrt 让外圈不过度密集），叠加哈希扰动
+    const rad = RAD_BASE + Math.sqrt(t) * RAD_GROW + (seededRnd(s * 3) - 0.5) * 5;
     // Z 按序推远，artist 多则铺得深；叠加哈希扰动避免成同心圆盘
-    const z = Z_START - (i / n) * Z_SPAN - (seededRnd(s * 7)) * 6;
-    const y = (seededRnd(s * 11) - 0.5) * 14;   // 上下散开，形成立体星座
+    const z = Z_START - t * Z_SPAN - (seededRnd(s * 7)) * 8;
+    const y = (seededRnd(s * 11) - 0.5) * Y_SPREAD;   // 上下散开，形成立体星座
     CLUSTER[name] = {
       x: +(Math.cos(ang) * rad).toFixed(2),
       y: +y.toFixed(2),
@@ -1377,27 +1400,86 @@ TRACKS.forEach((track, i) => {
 // ═══════════════════════════════════════════════════════════
 const labelEls = {};
 const labelCont = document.getElementById('artist-labels');
+
+// 点击艺人标签 = 点击该艺人的一张卡：聚焦 + 播放。
+// 该艺人在当前歌单不止一首 → 随机挑一首；只有一首就直接播那首。
+// 行为与卡片单击完全一致（focusedMesh / triggerPunch / enterFocus 三步）。
+function playArtist(name) {
+  const indices = ARTISTS[name];
+  if (!indices || !indices.length) return;
+  const pick = indices.length === 1
+    ? indices[0]
+    : indices[Math.floor(Math.random() * indices.length)];
+  const mesh = meshes[pick];
+  if (!mesh) return;
+  focusedMesh = mesh;
+  if (typeof triggerPunch === 'function') triggerPunch(mesh);
+  enterFocus(mesh.userData.track);
+}
+
 Object.entries(CLUSTER).forEach(([name]) => {
   const count = ARTISTS[name] ? ARTISTS[name].length : 1;
   const el = document.createElement('div');
   el.className = 'al';
   el.innerHTML = `<div class="al-dot"></div><div class="al-name">${name}</div><div class="al-count">${count} TRACK${count>1?'S':''} ›</div>`;
+  // 标签可点：阻止冒泡，避免触发画布的"点空处=退出聚焦"
+  el.addEventListener('click', (e) => { e.stopPropagation(); playArtist(name); });
+  el.addEventListener('mousedown', (e) => e.stopPropagation());
+  el.addEventListener('mouseup', (e) => e.stopPropagation());
   labelCont.appendChild(el);
   labelEls[name] = el;
 });
 
 const _lv = new THREE.Vector3();
+// 标签屏幕去重叠：因为不同深度的簇中心投影到屏幕后 (x,y) 可能彼此叠在
+// 一起（卡片做了 3D 去重叠，但标签钉的是裸簇心坐标），这里在屏幕空间
+// 再做一遍轻量分离——把投影后相互压住的标签沿 Y 轴推开，文字就不糊成
+// 一团。只对当前可见、且离相机够近（opacity>0）的标签做，开销很小。
+const LABEL_H = 26;   // 单个标签的近似高度（点+名+计数三行）
+const LABEL_W = 130;  // 近似宽度，用于判断是否"水平也挨着"才需要竖直推开
 function updateLabels() {
   const W2 = window.innerWidth, H2 = window.innerHeight;
+
+  // 1) 先投影，收集可见标签的屏幕坐标
+  const vis = [];
   Object.entries(CLUSTER).forEach(([name, ctr]) => {
     const el = labelEls[name]; if (!el) return;
     _lv.set(ctr.x, ctr.y + 6, ctr.z);
     _lv.project(camera);
-    if (_lv.z > 1) { el.style.opacity = '0'; return; }
-    el.style.left = ((_lv.x*.5+.5)*W2) + 'px';
-    el.style.top  = ((-_lv.y*.5+.5)*H2) + 'px';
-    const dist = Math.sqrt((ctr.x-camX)**2+(ctr.y-camY)**2+(ctr.z-camZ)**2);
-    el.style.opacity = Math.max(0, Math.min(.85, 1.1 - dist/65));
+    if (_lv.z > 1) { el.style.opacity = '0'; el.style.pointerEvents = 'none'; return; }
+    const x = (_lv.x * .5 + .5) * W2;
+    const y = (-_lv.y * .5 + .5) * H2;
+    const dist = Math.sqrt((ctr.x-camX)**2 + (ctr.y-camY)**2 + (ctr.z-camZ)**2);
+    const op = Math.max(0, Math.min(.85, 1.1 - dist/65));
+    if (op <= 0.01) { el.style.opacity = '0'; el.style.pointerEvents = 'none'; return; }
+    vis.push({ el, x, y, dist, op });
+  });
+
+  // 2) 屏幕空间竖直分离：按 y 排序，多轮把相互压住的标签推开。
+  //    只有当两标签 X 也足够接近（会真的视觉重叠）时才推，避免无谓抖动。
+  vis.sort((a, b) => a.y - b.y);
+  for (let iter = 0; iter < 6; iter++) {
+    let moved = false;
+    for (let i = 0; i < vis.length - 1; i++) {
+      const a = vis[i], b = vis[i + 1];
+      if (Math.abs(a.x - b.x) > LABEL_W) continue;   // 水平没挨着，不会重叠
+      const gap = b.y - a.y;
+      if (gap < LABEL_H) {
+        const push = (LABEL_H - gap) / 2;
+        a.y -= push; b.y += push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  // 3) 落位：近的标签层级更高，保证它压在远的之上
+  vis.forEach(v => {
+    v.el.style.left = v.x + 'px';
+    v.el.style.top  = v.y + 'px';
+    v.el.style.opacity = v.op;
+    v.el.style.pointerEvents = 'auto';
+    v.el.style.zIndex = String(1000 - Math.round(v.dist));
   });
 }
 
